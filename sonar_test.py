@@ -62,6 +62,7 @@ def create_enclosure(space, shape_type):
         space.add(wall)
 
 def create_agent(space):
+    # Kinematic body allows manual movement control (WASD)
     body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
     body.position = (WIDTH // 2, HEIGHT // 2)
     body.angle = 0 
@@ -80,10 +81,11 @@ def get_surface_offset(angle_rad, size):
     if abs(sin_a) < 0.0001: sin_a = 0.0001
     return half_size / max(abs(cos_a), abs(sin_a))
 
-def update_sonar(space, body, surface, font):
+def get_sensor_data(space, body):
+    # Returns a numpy array of normalized distances (0.0 to 1.0)
     start_angle = body.angle
     step_angle = (2 * math.pi) / NUM_RAYS
-    hit_wall = False
+    readings = []
 
     for i in range(NUM_RAYS):
         local_angle = i * step_angle
@@ -102,27 +104,45 @@ def update_sonar(space, body, surface, font):
         visual_start_pos = body.position + direction * dist_to_edge
         actual_end = result.point if result else end_pos
         
+        # Calculate raw distance
         raw_dist = visual_start_pos.get_distance(actual_end) if result else MAX_RANGE
         
+        # Check for wall clipping
         dist_center_to_hit = body.position.get_distance(actual_end) if result else 9999
         dist_center_to_border = dist_to_edge
         
         distance = raw_dist
-        
-        if result:
-            # if impact is inside the visual border, we're clipping the wall -> dist is 0
-            if dist_center_to_hit < dist_center_to_border:
-                 distance = 0
-            else:
-                 distance = raw_dist
+        if result and dist_center_to_hit < dist_center_to_border:
+             distance = 0
 
-        # force small gaps (physics engine noise) to 0
+        # Snap small gaps to 0
         if distance < 2.0:
             distance = 0
 
+        # Normalize to 0.0 - 1.0
+        readings.append(distance / MAX_RANGE)
+
+    return np.array(readings)
+
+def draw_sensor_debug(surface, body, data, font):
+    # Draws the rays based on the calculated data
+    start_angle = body.angle
+    step_angle = (2 * math.pi) / NUM_RAYS
+    hit_wall = False
+
+    for i in range(NUM_RAYS):
+        distance = data[i] * MAX_RANGE
         if distance == 0:
             hit_wall = True
-
+            
+        local_angle = i * step_angle
+        world_angle = start_angle + local_angle
+        direction = pymunk.Vec2d(math.cos(world_angle), math.sin(world_angle))
+        dist_to_edge = get_surface_offset(local_angle, AGENT_SIZE)
+        
+        visual_start_pos = body.position + direction * dist_to_edge
+        actual_end = visual_start_pos + direction * distance
+        
         pygame.draw.line(surface, (255, 255, 255), visual_start_pos, actual_end, 1)
         
         if distance < MAX_RANGE:
@@ -197,7 +217,11 @@ def main():
         v_world = [agent.local_to_world(v) for v in poly.get_vertices()]
         pygame.draw.polygon(screen, (50, 100, 255), v_world)
 
-        update_sonar(space, agent, screen, font)
+        # Get data (Physics only)
+        sensor_data = get_sensor_data(space, agent)
+        
+        # Draw (Visuals only)
+        draw_sensor_debug(screen, agent, sensor_data, font)
         
         info = font.render(f"Mode: {current_mode} | Move: WASD", True, (255, 255, 0))
         screen.blit(info, (10, 10))
