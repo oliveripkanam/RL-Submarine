@@ -2,12 +2,10 @@ import pygame
 import pymunk
 import math
 import random
-import numpy as np
+from sonar_sensors import Sonar
 
 # CONFIG
 WIDTH, HEIGHT = 800, 600
-NUM_RAYS = 16
-MAX_RANGE = 1000
 ENCLOSURE_SIZE = 250
 AGENT_SIZE = 40
 MOVE_SPEED = 4
@@ -19,6 +17,8 @@ def create_enclosure(space, shape_type):
 
     center = (WIDTH // 2, HEIGHT // 2)
     walls = []
+    
+    # radius 1.0 matches visual line thickness of 2
     wall_thickness = 1.0 
 
     if shape_type == "SQUARE":
@@ -55,6 +55,8 @@ def create_enclosure(space, shape_type):
         for i in range(len(vertices)):
             walls.append(pymunk.Segment(space.static_body, vertices[i], vertices[(i + 1) % len(vertices)], wall_thickness))
 
+    # physics walls are slippery (friction 0) and hard (elasticity 0)
+    # note: can change elasticity to make walls more or less bouncy
     for wall in walls:
         wall.elasticity = 0.0
         wall.friction = 0.0
@@ -72,87 +74,6 @@ def create_agent(space):
     space.add(body, shape)
     return body
 
-def get_surface_offset(angle_rad, size):
-    # finds distance from center to the edge of the square at a given angle
-    angle_rad = (angle_rad + math.pi) % (2 * math.pi) - math.pi
-    half_size = size / 2
-    cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
-    if abs(cos_a) < 0.0001: cos_a = 0.0001
-    if abs(sin_a) < 0.0001: sin_a = 0.0001
-    return half_size / max(abs(cos_a), abs(sin_a))
-
-def get_sensor_data(space, body):
-    # Returns a numpy array of normalized distances (0.0 to 1.0)
-    start_angle = body.angle
-    step_angle = (2 * math.pi) / NUM_RAYS
-    readings = []
-
-    for i in range(NUM_RAYS):
-        local_angle = i * step_angle
-        world_angle = start_angle + local_angle
-        direction = pymunk.Vec2d(math.cos(world_angle), math.sin(world_angle))
-        
-        # Get distance to the border
-        dist_to_edge = get_surface_offset(local_angle, AGENT_SIZE)
-        
-        # Start ray deeper inside (10px) to catch wall penetrations (else it'll pass through the wall)
-        start_pos = body.position + direction * (dist_to_edge - 10)
-        end_pos = start_pos + direction * MAX_RANGE
-        
-        result = space.segment_query_first(start_pos, end_pos, 1, pymunk.ShapeFilter(group=1))
-        
-        visual_start_pos = body.position + direction * dist_to_edge
-        actual_end = result.point if result else end_pos
-        
-        # Calculate raw distance
-        raw_dist = visual_start_pos.get_distance(actual_end) if result else MAX_RANGE
-        
-        # Check for wall clipping
-        dist_center_to_hit = body.position.get_distance(actual_end) if result else 9999
-        dist_center_to_border = dist_to_edge
-        
-        distance = raw_dist
-        if result and dist_center_to_hit < dist_center_to_border:
-             distance = 0
-
-        # Snap small gaps to 0
-        if distance < 2.0:
-            distance = 0
-
-        # Normalize to 0.0 - 1.0
-        readings.append(distance / MAX_RANGE)
-
-    return np.array(readings)
-
-def draw_sensor_debug(surface, body, data, font):
-    # Draws the rays based on the calculated data
-    start_angle = body.angle
-    step_angle = (2 * math.pi) / NUM_RAYS
-    hit_wall = False
-
-    for i in range(NUM_RAYS):
-        distance = data[i] * MAX_RANGE
-        if distance == 0:
-            hit_wall = True
-            
-        local_angle = i * step_angle
-        world_angle = start_angle + local_angle
-        direction = pymunk.Vec2d(math.cos(world_angle), math.sin(world_angle))
-        dist_to_edge = get_surface_offset(local_angle, AGENT_SIZE)
-        
-        visual_start_pos = body.position + direction * dist_to_edge
-        actual_end = visual_start_pos + direction * distance
-        
-        pygame.draw.line(surface, (255, 255, 255), visual_start_pos, actual_end, 1)
-        
-        if distance < MAX_RANGE:
-            text = font.render(f"{int(distance)}", True, (200, 200, 200))
-            surface.blit(text, actual_end + (5, 5))
-
-    if hit_wall:
-        msg = font.render("HIT A WALL!", True, (255, 50, 50))
-        surface.blit(msg, (WIDTH - 120, 10))
-
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -165,6 +86,8 @@ def main():
     create_enclosure(space, current_mode)
     agent = create_agent(space)
 
+    sonar = Sonar(space, agent, num_rays=16, max_range=1000, agent_size=AGENT_SIZE)
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -172,9 +95,18 @@ def main():
                 running = False
             
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_1: create_enclosure(space, "SQUARE"); current_mode="SQUARE"
-                elif event.key == pygame.K_2: create_enclosure(space, "CIRCLE"); current_mode="CIRCLE"
-                elif event.key == pygame.K_3: create_enclosure(space, "IRREGULAR"); current_mode="IRREGULAR"
+                if event.key == pygame.K_1: 
+                    create_enclosure(space, "SQUARE")
+                    current_mode="SQUARE"
+                    agent.position = (WIDTH // 2, HEIGHT // 2)
+                elif event.key == pygame.K_2: 
+                    create_enclosure(space, "CIRCLE")
+                    current_mode="CIRCLE"
+                    agent.position = (WIDTH // 2, HEIGHT // 2)
+                elif event.key == pygame.K_3: 
+                    create_enclosure(space, "IRREGULAR")
+                    current_mode="IRREGULAR"
+                    agent.position = (WIDTH // 2, HEIGHT // 2)
 
         keys = pygame.key.get_pressed()
         
@@ -217,13 +149,10 @@ def main():
         v_world = [agent.local_to_world(v) for v in poly.get_vertices()]
         pygame.draw.polygon(screen, (50, 100, 255), v_world)
 
-        # Get data (Physics only)
-        sensor_data = get_sensor_data(space, agent)
+        # use the new sonar class
+        sonar.draw(screen, font)
         
-        # Draw (Visuals only)
-        draw_sensor_debug(screen, agent, sensor_data, font)
-        
-        info = font.render(f"Mode: {current_mode} | Move: WASD", True, (255, 255, 0))
+        info = font.render(f"Mode: {current_mode} | Move: WASD | 1,2,3: Change Shape", True, (255, 255, 0))
         screen.blit(info, (10, 10))
 
         pygame.display.flip()
