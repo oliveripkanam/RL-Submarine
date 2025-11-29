@@ -10,7 +10,12 @@ controls:
 WASD to move
 1, 2, 3 to change environment shape
 
-to integrate, just write:
+to integrate:
     from sonar_sensors import Sonar
+    
+    # Init (Before loop)
     my_sonar = Sonar(space, sub_body)
-    state = my_sonar.get_observation()
+    
+    # In Game Loop
+    state = my_sonar.get_observation() # Get data for AI
+    my_sonar.draw(screen, font)        # Draw lines on screen
