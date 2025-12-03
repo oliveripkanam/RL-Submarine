@@ -67,6 +67,31 @@ while running:
     # sync sonar
     sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
 
+    # check for wall hits
+    sensor_data = my_sonar.get_observation()
+    hit_wall = False
+    for reading in sensor_data:
+        if reading == 0:
+            hit_wall = True
+            break
+            
+    if hit_wall:
+        # penalty
+        submarine.battery -= 10
+        
+        # bounce back logic: reverse velocity and push back slightly
+        # simple bounce: just invert velocity
+        submarine.vel_x *= -0.5
+        submarine.vel_y *= -0.5
+        
+        # push back based on velocity direction to unstuck
+        submarine.true_x += submarine.vel_x * 5
+        submarine.true_y += submarine.vel_y * 5
+
+    # cap battery at 0
+    if submarine.battery < 0:
+        submarine.battery = 0
+
     canvas.fill((0, 128, 255))
     cave_env.draw(canvas)
     submarine.draw(canvas)

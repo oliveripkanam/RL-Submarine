@@ -52,7 +52,6 @@ class CaveEnvironment:
                 x += 1
             y += 1
 
-        print(environment_tiles)
         self.environment_width = x * self.tile_size
         self.environment_height = y * self.tile_size
         return environment_tiles
