@@ -14,23 +14,45 @@ canvas = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT))
 spritesheet = SpriteSheet("src/cave_environment/tileset.png")
 font = pygame.font.Font(None, 25)
 
-space = pymunk.Space()
+# Map files list
+map_files = [
+    "src/cave_environment/tileset_basic.csv",
+    # "src/cave_environment/tileset_jagged_narrow.csv", # Missing from merge
+    # "src/cave_environment/tileset_right_angle.csv"    # Missing from merge
+]
+current_map_index = 0
 
-try:
-    cave_env = CaveEnvironment("src/cave_environment/tileset_basic.csv", spritesheet)
+def load_level(map_index):
+    # Reset space
+    new_space = pymunk.Space()
+    actual_index = map_index
     
-    # convert tiles to pymunk walls
-    for tile in cave_env.environment_tiles:
-        body = pymunk.Body(body_type=pymunk.Body.STATIC)
-        body.position = (tile.rect.centerx, tile.rect.centery)
+    try:
+        # Safety check for index
+        if map_index >= len(map_files):
+            print(f"Map index {map_index} not found, defaulting to 0")
+            actual_index = 0
+            
+        env = CaveEnvironment(map_files[actual_index], spritesheet)
         
-        shape = pymunk.Poly.create_box(body, (16, 16))
-        shape.elasticity = 0.0
-        shape.friction = 0.0
-        space.add(body, shape)
+        # Add walls
+        for tile in env.environment_tiles:
+            body = pymunk.Body(body_type=pymunk.Body.STATIC)
+            body.position = (tile.rect.centerx, tile.rect.centery)
+            shape = pymunk.Poly.create_box(body, (16, 16))
+            shape.elasticity = 0.0
+            shape.friction = 0.0
+            new_space.add(body, shape)
+            
+        return new_space, env, actual_index
+        
+    except Exception as e:
+        print(f"Error loading map: {e}")
+        return None, None, 0
 
-except Exception as e:
-    print(f"Error loading cave environment: {e}")
+# Initial load
+space, cave_env, current_map_index = load_level(0)
+if not space:
     pygame.quit()
     exit()
 
@@ -52,15 +74,37 @@ while running:
         if event.type == QUIT:
             running = False
 
-        if event.type == KEYDOWN and submarine.battery > 0:
-            if event.key == K_UP:
-                submarine.move_up()
-            elif event.key == K_DOWN:
-                submarine.move_down()
-            elif event.key == K_LEFT:
-                submarine.move_left()
-            elif event.key == K_RIGHT:
-                submarine.move_right()
+        if event.type == KEYDOWN:
+            if submarine.battery > 0:
+                if event.key == K_UP: submarine.move_up()
+                elif event.key == K_DOWN: submarine.move_down()
+                elif event.key == K_LEFT: submarine.move_left()
+                elif event.key == K_RIGHT: submarine.move_right()
+            
+            # Map switching
+            new_space = None
+            new_env = None
+            
+            if event.key == K_1:
+                new_space, new_env, new_idx = load_level(0)
+            elif event.key == K_2:
+                new_space, new_env, new_idx = load_level(1)
+            elif event.key == K_3:
+                new_space, new_env, new_idx = load_level(2)
+            
+            if new_space:
+                space = new_space
+                cave_env = new_env
+                current_map_index = new_idx
+                my_sonar.space = space
+                # Re-create ghost body since old space is gone
+                sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
+                sonar_body.position = (100, 100)
+                space.add(sonar_body)
+                my_sonar.body = sonar_body # update sonar reference
+                
+                submarine.true_x, submarine.true_y = 100, 100
+                submarine.battery = 100
 
     submarine.update()
 
@@ -76,30 +120,29 @@ while running:
             break
             
     if hit_wall:
-        # penalty
         submarine.battery -= 10
-        
-        # bounce back logic: reverse velocity and push back slightly
-        # simple bounce: just invert velocity
         submarine.vel_x *= -0.5
         submarine.vel_y *= -0.5
-        
-        # push back based on velocity direction to unstuck
         submarine.true_x += submarine.vel_x * 5
         submarine.true_y += submarine.vel_y * 5
 
-    # cap battery at 0
     if submarine.battery < 0:
         submarine.battery = 0
 
     canvas.fill((0, 128, 255))
-    cave_env.draw(canvas)
+    if cave_env:
+        cave_env.draw(canvas)
     submarine.draw(canvas)
     
     my_sonar.draw(canvas, font)
     
-    battery_text = font.render(f'Battery: {submarine.battery}', True, (255, 255, 255))
+    # UI
+    battery_text = font.render(f'Battery: {submarine.battery} | Map: {map_files[current_map_index]}', True, (255, 255, 255))
+    # controls text
+    controls_text = font.render('Arrows: Move | 1,2,3: Change Map', True, (255, 255, 0))
+    
     canvas.blit(battery_text, (10, 10))
+    canvas.blit(controls_text, (10, 30))
     screen.blit(canvas, (0, 0))
     pygame.display.flip()
     clock.tick(60)

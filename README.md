@@ -3,8 +3,11 @@
 initial setup:
 pip install pymunk pygame numpy
 
-to run:
+to run sonar test:
 python sonar_test.py
+
+to run main test:
+python main_with_cave.py
 
 controls:
 WASD to move
