@@ -52,12 +52,6 @@ class Submarine:
         self.true_x += self.vel_x
         self.true_y += self.vel_y
 
-        # collision with the floor
-        screen_height = 600
-        if self.true_y > screen_height - self.rect.height:
-            self.true_y = screen_height - self.rect.height
-            self.vel_y = 0
-
         self.rect.x = int(self.true_x)
         self.rect.y = int(self.true_y)
 
