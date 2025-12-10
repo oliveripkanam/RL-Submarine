@@ -62,6 +62,7 @@ def load_level(map_index):
         return None, None, 0
 
 space, cave_env, current_map_index = load_level(0)
+wall_rects = [tile.rect for tile in cave_env.environment_tiles]
 if not space:
     pygame.quit()
     exit()
@@ -73,7 +74,8 @@ sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
 sonar_body.position = (submarine.true_x, submarine.true_y)
 space.add(sonar_body)
 
-my_sonar = Sonar(space, sonar_body, num_rays=16, max_range=200, agent_size=30)
+# my_sonar = Sonar(space, sonar_body, num_rays=16, max_range=200, agent_size=30)
+my_sonar = Sonar(space, sonar_body, num_rays=16, max_range=200, agent_size=75)
 
 running = True
 clock = pygame.time.Clock()
@@ -110,6 +112,7 @@ while running:
                 space = new_space
                 cave_env = new_env
                 current_map_index = new_idx
+                wall_rects = [tile.rect for tile in cave_env.environment_tiles]
                 my_sonar.space = space
                 
                 sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
@@ -125,11 +128,17 @@ while running:
     sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
 
     sensor_data = my_sonar.get_observation()
+    # hit_wall = False
+    # for reading in sensor_data:
+    #     if reading == 0:
+    #         hit_wall = True
+    #         break
+    
+    collision_index = submarine.hitbox.collidelist(wall_rects)
+    
     hit_wall = False
-    for reading in sensor_data:
-        if reading == 0:
-            hit_wall = True
-            break
+    if collision_index != -1: # -1 means no collision found
+        hit_wall = True
             
     if hit_wall:
         submarine.battery -= 10

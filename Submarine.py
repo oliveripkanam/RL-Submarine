@@ -2,15 +2,22 @@ import pygame, math
 
 class Submarine:
     def __init__(self, x, y):
-        self.image = pygame.image.load('submarine.png')
+        original_image = pygame.image.load('submarine.png')        
+        scale_factor = 5 
+        new_width = original_image.get_width() * scale_factor
+        new_height = original_image.get_height() * scale_factor
+        self.image = pygame.transform.scale(original_image, (new_width, new_height))
         self.rect = self.image.get_rect(topleft=(x, y))
+        
+        self.hitbox = self.rect.inflate(-45, -45)
+        physics_scale = 2.5
 
         self.vel_x = 0
         self.vel_y = 0
-        self.acceleration = 2.0
+        self.acceleration = 2.0 * physics_scale
         self.friction = 0.96
-        self.gravity = 0.05
-        self.max_speed = 8
+        self.gravity = 0.05 * scale_factor
+        self.max_speed = 8 * physics_scale
 
         self.true_x = float(x)
         self.true_y = float(y)
@@ -54,6 +61,8 @@ class Submarine:
 
         self.rect.x = int(self.true_x)
         self.rect.y = int(self.true_y)
+        
+        self.hitbox.center = self.rect.center
 
     def draw(self, surface):
         surface.blit(self.image, self.rect)
