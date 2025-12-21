@@ -1,11 +1,11 @@
 from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
-from Submarine import Submarine
+from src.entities.submarine import Submarine
 import pygame
 import pymunk
 import math
 from pygame.locals import *
-from sonar_sensors import Sonar
+from src.sonar.sensors import Sonar
 
 pygame.init()
 DISPLAY_WIDTH, DISPLAY_HEIGHT = 60 * 16, 40 * 16

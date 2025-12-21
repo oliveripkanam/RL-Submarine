@@ -2,7 +2,7 @@ import pygame, math
 
 class Submarine:
     def __init__(self, x, y):
-        self.image = pygame.image.load('submarine.png')
+        self.image = pygame.image.load('src/entities/submarine.png')
         self.rect = self.image.get_rect(topleft=(x, y))
 
         self.vel_x = 0

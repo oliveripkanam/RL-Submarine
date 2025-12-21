@@ -2,7 +2,7 @@ import pygame
 import pymunk
 import math
 import random
-from sonar_sensors import Sonar
+from src.sonar.sensors import Sonar
 
 # CONFIG
 WIDTH, HEIGHT = 800, 600
