@@ -18,7 +18,7 @@ class Submarine:
         self.battery = 100
 
     def use_battery(self):
-        self.battery -= 2
+        self.battery -= 1
 
     def move_up(self):
         self.vel_y -= self.acceleration
