@@ -4,17 +4,17 @@ initial setup:
 pip install pymunk pygame numpy
 
 to run sonar test:
-python sonar_test.py
+python src/sonar/test.py
 
 to run main test:
-python main_with_cave.py
+python main.py
 
 controls:
-WASD to move
-1, 2, 3 to change environment shape
+Arrows to move
+1-7 to change maps
 
 to integrate:
-    from sonar_sensors import Sonar
+    from src.sonar.sensors import Sonar
     
     # Init (Before loop)
     my_sonar = Sonar(space, sub_body)
