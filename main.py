@@ -10,7 +10,6 @@ from src.sonar.sensors import Sonar
 pygame.init()
 WINDOW_WIDTH, WINDOW_HEIGHT = 1200, 800 # Increased window size for better visibility
 screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-canvas = None 
 
 spritesheet = SpriteSheet("src/cave_environment/tileset.png")
 font = pygame.font.Font(None, 25)
@@ -108,6 +107,7 @@ while running:
     for event in pygame.event.get():
         if event.type == QUIT:
             running = False
+            running = False
 
         if event.type == KEYDOWN:
             if submarine.battery > 0:
@@ -164,11 +164,6 @@ while running:
         [submarine.vel_x / submarine.max_speed, submarine.vel_y / submarine.max_speed]
     ])
     
-    # DEBUG: Print shape once
-    if 'printed_shape' not in globals():
-        print(f"DEBUG: Observation Shape: {full_state.shape}")
-        printed_shape = True
-
     hit_wall = False
     for reading in sensor_data:
         if reading == 0:

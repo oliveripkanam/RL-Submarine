@@ -33,7 +33,7 @@ class Sonar:
             start_pos = self.body.position + direction * (dist_to_edge - 10)
             end_pos = start_pos + direction * self.max_range
             
-            result = self.space.segment_query_first(start_pos, end_pos, 1, pymunk.ShapeFilter(group=1))
+            result = self.space.segment_query_first(start_pos, end_pos, 1, pymunk.ShapeFilter())
             
             visual_start_pos = self.body.position + direction * dist_to_edge
             actual_end = result.point if result else end_pos
