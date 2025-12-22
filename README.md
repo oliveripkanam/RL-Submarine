@@ -1,24 +1,28 @@
-## WIP
+## Setup
+pip install pymunk pygame numpy torch
 
-initial setup:
-pip install pymunk pygame numpy
+## How to Run
+**Manual Play:**
+`python main.py`
 
-to run sonar test:
-python sonar_test.py
+**Train AI Agent:**
+`python train.py`
+- Press **TAB** to toggle Fast Mode (Headless) vs Watch Mode.
 
-to run main test:
-python main_with_cave.py
+## Controls (Manual Mode)
+- **Arrow Keys:** Move Submarine
+- **1-7:** Change Map Layout
 
-controls:
-WASD to move
-1, 2, 3 to change environment shape
+## Integration Guide
+The Sonar module is self-contained in `src/sonar/sensors.py`.
 
-to integrate:
-    from sonar_sensors import Sonar
-    
-    # Init (Before loop)
-    my_sonar = Sonar(space, sub_body)
-    
-    # In Game Loop
-    state = my_sonar.get_observation() # Get data for AI
-    my_sonar.draw(screen, font)        # Draw lines on screen
+```python
+from src.sonar.sensors import Sonar
+
+# Init (Before loop)
+my_sonar = Sonar(space, sub_body)
+
+# In Game Loop
+state = my_sonar.get_observation() # Returns 16 normalized floats (0.0-1.0)
+my_sonar.draw(screen, font)        # Visual debug lines
+```
