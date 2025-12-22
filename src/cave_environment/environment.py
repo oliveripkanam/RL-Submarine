@@ -1,4 +1,4 @@
-import pygame, csv, os
+import pygame, csv
 from .spritesheet import SpriteSheet
 
 # Reference: https://www.youtube.com/watch?v=37phHwLtaFg
@@ -19,6 +19,18 @@ class CaveEnvironment:
         self.start_x, self.start_y= 0, 0
         self.spritesheet = spritesheet
         self.environment_tiles = self.load_tiles(plot_filename)
+        
+        # Calculate dimensions based on the data we just loaded
+        # We find the tile with the max x and max y coordinates
+        if self.environment_tiles:
+            max_x = max(tile.rect.right for tile in self.environment_tiles)
+            max_y = max(tile.rect.bottom for tile in self.environment_tiles)
+            self.environment_width = max_x
+            self.environment_height = max_y
+        else:
+            self.environment_width = 800 # Default fallback
+            self.environment_height = 600
+
         self.environment_surface = pygame.Surface((self.environment_width, self.environment_height))
         self.environment_surface.set_colorkey((0, 0, 0))
         self.load_environment()
@@ -52,8 +64,6 @@ class CaveEnvironment:
                 x += 1
             y += 1
 
-        self.environment_width = x * self.tile_size
-        self.environment_height = y * self.tile_size
         return environment_tiles
         
         

@@ -12,7 +12,6 @@ class Sonar:
         self.agent_size = agent_size
     
     def _get_surface_offset(self, angle_rad):
-        # finds distance from center to the edge of the square at a given angle
         angle_rad = (angle_rad + math.pi) % (2 * math.pi) - math.pi
         half_size = self.agent_size / 2
         cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
@@ -21,7 +20,6 @@ class Sonar:
         return half_size / max(abs(cos_a), abs(sin_a))
 
     def get_observation(self):
-        # returns 16 normalized values (0.0 - 1.0)
         start_angle = self.body.angle
         step_angle = (2 * math.pi) / self.num_rays
         readings = []
@@ -32,8 +30,6 @@ class Sonar:
             direction = pymunk.Vec2d(math.cos(world_angle), math.sin(world_angle))
             
             dist_to_edge = self._get_surface_offset(local_angle)
-            
-            # start ray deeper inside (10px) to catch penetrations
             start_pos = self.body.position + direction * (dist_to_edge - 10)
             end_pos = start_pos + direction * self.max_range
             
@@ -43,15 +39,12 @@ class Sonar:
             actual_end = result.point if result else end_pos
             
             raw_dist = visual_start_pos.get_distance(actual_end) if result else self.max_range
-            
-            # check for wall clipping (impact inside visual border)
             dist_center_to_hit = self.body.position.get_distance(actual_end) if result else 9999
             
             distance = raw_dist
             if result and dist_center_to_hit < dist_to_edge:
                  distance = 0
 
-            # snap small gaps to 0
             if distance < 2.0:
                 distance = 0
 
@@ -60,10 +53,9 @@ class Sonar:
         return np.array(readings)
 
     def draw(self, surface, font):
-        # debug visualization
         start_angle = self.body.angle
         step_angle = (2 * math.pi) / self.num_rays
-        data = self.get_observation() # get fresh data to draw
+        data = self.get_observation()
         hit_wall = False
 
         for i in range(self.num_rays):
@@ -87,6 +79,5 @@ class Sonar:
 
         if hit_wall:
             msg = font.render("HIT A WALL!", True, (255, 50, 50))
-            # simple hack to get screen width without passing it in
             surface.blit(msg, (surface.get_width() - 120, 10))
 

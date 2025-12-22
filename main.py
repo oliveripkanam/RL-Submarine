@@ -1,52 +1,75 @@
 from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
-from Submarine import Submarine
+from src.entities.submarine import Submarine
 import pygame
 import pymunk
 import math
 from pygame.locals import *
-from sonar_sensors import Sonar
+from src.sonar.sensors import Sonar
 
 pygame.init()
-DISPLAY_WIDTH, DISPLAY_HEIGHT = 60 * 16, 40 * 16
-screen = pygame.display.set_mode((DISPLAY_WIDTH, DISPLAY_HEIGHT))
-canvas = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT))
+WINDOW_WIDTH, WINDOW_HEIGHT = 1200, 800 # Increased window size for better visibility
+screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+canvas = None 
 
 spritesheet = SpriteSheet("src/cave_environment/tileset.png")
 font = pygame.font.Font(None, 25)
 
-# Map files list
 map_files = [
     "src/cave_environment/tileset_basic.csv",
     "src/cave_environment/tileset_editor_basic_jagged.csv",
     "src/cave_environment/tileset_jagged_narrow.csv",
-    "src/cave_environment/tileset_right_angle.csv",
-    "src/cave_environment/tileset_right_angle_x_axis_flipped.csv",
-    "src/cave_environment/tileset_right_angle_x_y_axis_flipped.csv",
-    "src/cave_environment/tileset_right_angle_y_axis_flipped.csv"
+    "src/cave_environment/tileset_zigzag.csv"
 ]
 current_map_index = 0
 
 def find_safe_start(env, width, height):
     wall_rects = [t.rect for t in env.environment_tiles]
-    for y in range(100, height - 100, 50):
-        for x in range(100, width - 100, 50):
-            test_rect = pygame.Rect(x, y, 40, 40)
+    
+    # 1. Find the first X column that has a decent opening (start of cave)
+    start_x = 0
+    found_start = False
+    
+    for x in range(50, width - 50, 16):
+        valid_ys = []
+        for y in range(50, height - 50, 16):
+            test_rect = pygame.Rect(x, y, 30, 30)
             if test_rect.collidelist(wall_rects) == -1:
-                return x, y
-    return 100, 100
+                valid_ys.append(y)
+        
+        if len(valid_ys) > 3:
+            start_x = x
+            found_start = True
+            break
+            
+    if not found_start:
+        return 100, 100
+        
+    # 2. Move right a fixed "safe" distance (e.g., 64px = 4 tiles)
+    spawn_x = start_x + 64
+    
+    # 3. At this new X, find the vertical center of the open space
+    valid_ys_at_spawn = []
+    for y in range(50, height - 50, 16):
+        test_rect = pygame.Rect(spawn_x, y, 30, 30)
+        if test_rect.collidelist(wall_rects) == -1:
+            valid_ys_at_spawn.append(y)
+            
+    if valid_ys_at_spawn:
+        avg_y = sum(valid_ys_at_spawn) // len(valid_ys_at_spawn)
+        return spawn_x, avg_y
+        
+    return start_x + 20, sum(valid_ys) // len(valid_ys)
 
 def load_level(map_index):
     new_space = pymunk.Space()
     actual_index = map_index
-    
     try:
         if map_index >= len(map_files):
             print(f"Map index {map_index} not found, defaulting to 0")
             actual_index = 0
             
         env = CaveEnvironment(map_files[actual_index], spritesheet)
-        
         for tile in env.environment_tiles:
             body = pymunk.Body(body_type=pymunk.Body.STATIC)
             body.position = (tile.rect.centerx, tile.rect.centery)
@@ -54,9 +77,7 @@ def load_level(map_index):
             shape.elasticity = 0.0
             shape.friction = 0.0
             new_space.add(body, shape)
-            
         return new_space, env, actual_index
-        
     except Exception as e:
         print(f"Error loading map: {e}")
         return None, None, 0
@@ -66,20 +87,21 @@ if not space:
     pygame.quit()
     exit()
 
-start_x, start_y = find_safe_start(cave_env, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+MAP_WIDTH = cave_env.environment_width
+MAP_HEIGHT = cave_env.environment_height
+canvas = pygame.Surface((MAP_WIDTH, MAP_HEIGHT))
+
+start_x, start_y = find_safe_start(cave_env, MAP_WIDTH, MAP_HEIGHT)
 submarine = Submarine(start_x, start_y)
 
 sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
-sonar_body.position = (submarine.true_x, submarine.true_y)
+sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
 space.add(sonar_body)
 
 my_sonar = Sonar(space, sonar_body, num_rays=16, max_range=200, agent_size=30)
 
 running = True
 clock = pygame.time.Clock()
-
-camera_x = 0
-camera_y = 0
 
 while running:
     clock.tick(60)
@@ -110,21 +132,43 @@ while running:
                 space = new_space
                 cave_env = new_env
                 current_map_index = new_idx
-                my_sonar.space = space
                 
+                MAP_WIDTH = cave_env.environment_width
+                MAP_HEIGHT = cave_env.environment_height
+                canvas = pygame.Surface((MAP_WIDTH, MAP_HEIGHT))
+                
+                my_sonar.space = space
                 sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
-                sx, sy = find_safe_start(cave_env, DISPLAY_WIDTH, DISPLAY_HEIGHT)
-                sonar_body.position = (sx, sy)
+                sx, sy = find_safe_start(cave_env, MAP_WIDTH, MAP_HEIGHT)
+                
+                submarine.true_x, submarine.true_y = sx, sy
+                submarine.rect.topleft = (int(sx), int(sy)) # Force update rect immediately
+                
+                sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
                 space.add(sonar_body)
                 my_sonar.body = sonar_body
                 
-                submarine.true_x, submarine.true_y = sx, sy
                 submarine.battery = 100
 
     submarine.update()
     sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
 
     sensor_data = my_sonar.get_observation()
+    
+    # Construct full state for RL (19 inputs)
+    # [16 Sonar, 1 Battery, 2 Velocity]
+    import numpy as np
+    full_state = np.concatenate([
+        sensor_data,
+        [submarine.battery / 100.0],
+        [submarine.vel_x / submarine.max_speed, submarine.vel_y / submarine.max_speed]
+    ])
+    
+    # DEBUG: Print shape once
+    if 'printed_shape' not in globals():
+        print(f"DEBUG: Observation Shape: {full_state.shape}")
+        printed_shape = True
+
     hit_wall = False
     for reading in sensor_data:
         if reading == 0:
@@ -141,48 +185,35 @@ while running:
     if submarine.battery < 0:
         submarine.battery = 0
 
-    target_cam_x = submarine.true_x - DISPLAY_WIDTH / 2
-    target_cam_y = submarine.true_y - DISPLAY_HEIGHT / 2
-    camera_x += (target_cam_x - camera_x) * 0.1
-    camera_y += (target_cam_y - camera_y) * 0.1
-    
     canvas.fill((0, 128, 255))
+    canvas.blit(cave_env.environment_surface, (0, 0))
     
-    # manual blit for camera offset
-    canvas.blit(cave_env.environment_surface, (cave_env.start_x - camera_x, cave_env.start_y - camera_y))
+    # Draw Start Line (Red)
+    pygame.draw.line(canvas, (255, 0, 0), (start_x, 0), (start_x, MAP_HEIGHT), 2)
     
-    screen_pos_x = submarine.rect.x - camera_x
-    screen_pos_y = submarine.rect.y - camera_y
-    canvas.blit(submarine.image, (screen_pos_x, screen_pos_y))
+    # Draw Finish Line (Green)
+    pygame.draw.line(canvas, (0, 255, 0), (MAP_WIDTH - 5, 0), (MAP_WIDTH - 5, MAP_HEIGHT), 5)
     
-    # manual sonar draw for camera offset
-    start_angle = sonar_body.angle
-    step_angle = (2 * math.pi) / 16
-    for i in range(16):
-        distance = sensor_data[i] * 200 # MAX_RANGE
-        local_angle = i * step_angle
-        world_angle = start_angle + local_angle
-        direction = pymunk.Vec2d(math.cos(world_angle), math.sin(world_angle))
-        
-        dist_to_edge = my_sonar._get_surface_offset(local_angle)
-        world_start = sonar_body.position + direction * dist_to_edge
-        world_end = world_start + direction * distance
-        
-        screen_start = (world_start.x - camera_x, world_start.y - camera_y)
-        screen_end = (world_end.x - camera_x, world_end.y - camera_y)
-        
-        pygame.draw.line(canvas, (255, 255, 255), screen_start, screen_end, 1)
-        
-        if distance < 200:
-             text = font.render(f"{int(distance)}", True, (200, 200, 200))
-             canvas.blit(text, (screen_end[0] + 5, screen_end[1] + 5))
+    submarine.draw(canvas)
+    my_sonar.draw(canvas, font)
+    
+    # Scale to fit window
+    scale = min(WINDOW_WIDTH / MAP_WIDTH, WINDOW_HEIGHT / MAP_HEIGHT)
+    new_size = (int(MAP_WIDTH * scale), int(MAP_HEIGHT * scale))
+    scaled_surface = pygame.transform.smoothscale(canvas, new_size)
+    
+    dest_x = (WINDOW_WIDTH - new_size[0]) // 2
+    dest_y = (WINDOW_HEIGHT - new_size[1]) // 2
+    
+    screen.fill((0, 0, 0))
+    screen.blit(scaled_surface, (dest_x, dest_y))
 
     battery_text = font.render(f'Battery: {submarine.battery} | Map: {map_files[current_map_index]}', True, (255, 255, 255))
     controls_text = font.render('Arrows: Move | 1-7: Change Map', True, (255, 255, 0))
     
-    canvas.blit(battery_text, (10, 10))
-    canvas.blit(controls_text, (10, 30))
-    screen.blit(canvas, (0, 0))
+    screen.blit(battery_text, (10, 10))
+    screen.blit(controls_text, (10, 30))
+    
     pygame.display.flip()
     clock.tick(60)
 
