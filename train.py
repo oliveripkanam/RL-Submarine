@@ -1,6 +1,8 @@
 import pygame
 import pymunk
 import numpy as np
+import os
+import glob
 from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
 from src.entities.submarine import Submarine
@@ -9,26 +11,25 @@ from src.ai.agent import DoubleDQNAgent
 
 # Configuration
 WATCH_MODE = True
-NUM_EPISODES = 1000
-MAX_STEPS = 2000
+LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
+NUM_EPISODES = 2000
+MAX_STEPS = 4000
 BATCH_SIZE = 64
 EPSILON_START = 1.0
 EPSILON_END = 0.01
-EPSILON_DECAY = 0.995
+EPSILON_DECAY = 0.999
 TARGET_UPDATE = 1000
 SAVE_INTERVAL = 50
 
 # Initialize pygame
 pygame.init()
-# Setup a display window that can be used for both modes (or just resize when toggling)
-# To allow toggling, we always need a window.
 screen = pygame.display.set_mode((1200, 800))
 clock = pygame.time.Clock()
 font = pygame.font.Font(None, 25)
 hit_font = pygame.font.Font(None, 40)
 
 def get_full_state(sonar_data, submarine):
-    normalized_battery = submarine.battery / 100.0
+    normalized_battery = submarine.battery / 300.0
     norm_vx = (submarine.vel_x + 8.0) / 16.0 
     norm_vy = (submarine.vel_y + 8.0) / 16.0
     
@@ -40,6 +41,18 @@ def get_full_state(sonar_data, submarine):
 
 def train():
     global WATCH_MODE
+    
+    # Auto-cleanup: If starting fresh, delete old models
+    if not LOAD_MODEL:
+        files = glob.glob("models/*.pth")
+        for f in files:
+            try:
+                os.remove(f)
+            except Exception as e:
+                print(f"Error deleting {f}: {e}")
+        if files:
+            print("Cleared previous models.")
+
     spritesheet = SpriteSheet("src/cave_environment/tileset.png")
     cave_env = CaveEnvironment("src/cave_environment/tileset_basic.csv", spritesheet)
     
@@ -55,15 +68,27 @@ def train():
 
     agent = DoubleDQNAgent(input_shape=19, num_actions=4)
     epsilon = EPSILON_START
+    
+    if LOAD_MODEL:
+        try:
+            agent.load("models/ddqn_submarine_final.pth")
+            print("Successfully loaded existing model!")
+            epsilon = 1
+        except FileNotFoundError:
+            print("No existing model found, starting fresh.")
+
     total_steps = 0
 
     print(f"Starting training on Device: {agent.device}")
     print("Press TAB to toggle Fast/Watch Mode. Press ESC to quit.")
 
     for episode in range(NUM_EPISODES):
-        start_x, start_y = 100, 300
+        # Always start at x=100 (Full map)
+        start_x = 100
+        start_y = 300
+
         submarine = Submarine(start_x, start_y)
-        submarine.battery = 100
+        submarine.battery = 300
         
         sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
         sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
@@ -78,18 +103,19 @@ def train():
         display_hit_msg = False
         
         for step in range(MAX_STEPS):
-            # Event handling
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    return
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+            # Event handling (Throttled in fast mode)
+            if WATCH_MODE or step % 100 == 0:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
                         pygame.quit()
                         return
-                    if event.key == pygame.K_TAB:
-                        WATCH_MODE = not WATCH_MODE
-                        print(f"Watch Mode: {WATCH_MODE}")
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            pygame.quit()
+                            return
+                        if event.key == pygame.K_TAB:
+                            WATCH_MODE = not WATCH_MODE
+                            print(f"Watch Mode: {WATCH_MODE}")
 
             action = agent.select_action(state, epsilon)
             
@@ -109,6 +135,13 @@ def train():
             next_state = get_full_state(next_observation, submarine)
             
             reward = -0.1
+            
+            # Encourage moving right (else it'll keep moving left)
+            if action == 3: # Right
+                reward += 0.05
+            elif action == 2: # Left
+                reward -= 0.05
+
             display_hit_msg = False
             
             hit_wall = False
@@ -186,8 +219,7 @@ def train():
                 clock.tick(60)
             else:
                 # In fast mode, pump events to keep window responsive but don't draw
-                # Optional: Draw a static "Training in Fast Mode..." screen once
-                if step % 100 == 0:
+                if step % 1000 == 0:
                     screen.fill((0, 0, 0))
                     msg = font.render(f"FAST MODE (Ep {episode}). Press TAB to Watch.", True, (0, 255, 0))
                     screen.blit(msg, (1200//2 - 150, 800//2))

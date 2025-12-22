@@ -25,7 +25,7 @@ class DoubleDQNAgent:
     def __init__(self, input_shape=19, num_actions=4, lr=1e-4, gamma=0.99, buffer_size=100000):
         self.num_actions = num_actions
         self.gamma = gamma
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
 
         self.policy_net = DQN(input_shape, num_actions).to(self.device)
         self.target_net = DQN(input_shape, num_actions).to(self.device)
