@@ -3,6 +3,7 @@ import pymunk
 import numpy as np
 import os
 import glob
+import random
 from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
 from src.entities.submarine import Submarine
@@ -21,12 +22,39 @@ EPSILON_DECAY = 0.999
 TARGET_UPDATE = 1000
 SAVE_INTERVAL = 50
 
+# Map configuration
+MAP_FILES = [
+    "src/cave_environment/tileset_basic.csv",
+    "src/cave_environment/tileset_editor_basic_jagged.csv"
+]
+
 # Initialize pygame
 pygame.init()
 screen = pygame.display.set_mode((1200, 800))
 clock = pygame.time.Clock()
 font = pygame.font.Font(None, 25)
 hit_font = pygame.font.Font(None, 40)
+
+def load_level(map_index, spritesheet):
+    """Loads a specific map and initializes the physics space."""
+    try:
+        filename = MAP_FILES[map_index]
+        env = CaveEnvironment(filename, spritesheet)
+        
+        new_space = pymunk.Space()
+        new_space.gravity = (0, 0)
+        
+        for tile in env.environment_tiles:
+            body = pymunk.Body(body_type=pymunk.Body.STATIC)
+            body.position = (tile.rect.centerx, tile.rect.centery)
+            shape = pymunk.Poly.create_box(body, (tile.rect.width, tile.rect.height))
+            shape.filter = pymunk.ShapeFilter(group=1)
+            new_space.add(body, shape)
+            
+        return new_space, env
+    except Exception as e:
+        print(f"Error loading map {map_index}: {e}")
+        return None, None
 
 def get_full_state(sonar_data, submarine):
     normalized_battery = submarine.battery / 300.0
@@ -54,18 +82,8 @@ def train():
             print("Cleared previous models.")
 
     spritesheet = SpriteSheet("src/cave_environment/tileset.png")
-    cave_env = CaveEnvironment("src/cave_environment/tileset_basic.csv", spritesheet)
     
-    space = pymunk.Space()
-    space.gravity = (0, 0)
-    
-    for tile in cave_env.environment_tiles:
-        body = pymunk.Body(body_type=pymunk.Body.STATIC)
-        body.position = (tile.rect.centerx, tile.rect.centery)
-        shape = pymunk.Poly.create_box(body, (tile.rect.width, tile.rect.height))
-        shape.filter = pymunk.ShapeFilter(group=1)
-        space.add(body, shape)
-
+    # Initialize agent
     agent = DoubleDQNAgent(input_shape=19, num_actions=4)
     epsilon = EPSILON_START
     
@@ -73,7 +91,7 @@ def train():
         try:
             agent.load("models/ddqn_submarine_final.pth")
             print("Successfully loaded existing model!")
-            epsilon = 1
+            epsilon = 0.5
         except FileNotFoundError:
             print("No existing model found, starting fresh.")
 
@@ -83,10 +101,16 @@ def train():
     print("Press TAB to toggle Fast/Watch Mode. Press ESC to quit.")
 
     for episode in range(NUM_EPISODES):
-        # Always start at x=100 (Full map)
-        start_x = 100
-        start_y = 300
+        # Randomly select a map for this episode
+        map_idx = random.randint(0, len(MAP_FILES) - 1)
+        
+        # Load environment & physics
+        space, cave_env = load_level(map_idx, spritesheet)
+        if not space:
+            continue
 
+        # Reset submarine
+        start_x, start_y = 100, 300
         submarine = Submarine(start_x, start_y)
         submarine.battery = 300
         
@@ -152,6 +176,7 @@ def train():
             
             if hit_wall:
                 reward -= 10
+                submarine.battery -= 10
                 display_hit_msg = True
                 
                 # Hard revert: restore position to before the collision
@@ -228,12 +253,13 @@ def train():
             if done:
                 break
         
-        space.remove(sonar_body)
+        # Cleanup physics body for next episode (Space is discarded anyway, but good practice)
+        # space.remove(sonar_body) # Space is re-created next loop
         
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
         
         if episode % 10 == 0:
-            print(f"Episode {episode}/{NUM_EPISODES} | Total Reward: {total_reward:.2f} | Epsilon: {epsilon:.2f}")
+            print(f"Ep {episode} (Map {map_idx}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f}")
 
         if episode % SAVE_INTERVAL == 0:
             agent.save(f"models/ddqn_submarine_ep{episode}.pth")
