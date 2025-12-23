@@ -25,7 +25,15 @@ SAVE_INTERVAL = 50
 # Map configuration
 MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
-    "src/cave_environment/map2_jagged.csv"
+    "src/cave_environment/map2_jagged.csv",
+    "src/cave_environment/map3_jagged_long_narrow.csv",
+    "src/cave_environment/map4_zigzag.csv",
+    "src/cave_environment/map5_straight_batt.csv",
+    "src/cave_environment/map6_jagged_batt.csv",
+    "src/cave_environment/map7_straight_hard.csv",
+    "src/cave_environment/map8_jagged_hard.csv",
+    "src/cave_environment/map9_long_batt.csv",
+    "src/cave_environment/map10_long_hard.csv"
 ]
 
 # Initialize pygame

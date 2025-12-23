@@ -24,7 +24,9 @@ map_files = [
     "src/cave_environment/map5_straight_batt.csv",
     "src/cave_environment/map6_jagged_batt.csv",
     "src/cave_environment/map7_straight_hard.csv",
-    "src/cave_environment/map8_jagged_hard.csv"
+    "src/cave_environment/map8_jagged_hard.csv",
+    "src/cave_environment/map9_long_batt.csv",
+    "src/cave_environment/map10_long_hard.csv"
 ]
 current_map_index = 0
 
@@ -137,7 +139,7 @@ while running:
                     
                     sx, sy = find_safe_start(cave_env, MAP_WIDTH, MAP_HEIGHT)
                     submarine = Submarine(sx, sy)
-                    submarine.battery = 100
+                    submarine.battery = 300
                     
                     sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
                     sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
@@ -166,6 +168,8 @@ while running:
             elif event.key == K_6: new_space, new_env, new_idx = load_level(5)
             elif event.key == K_7: new_space, new_env, new_idx = load_level(6)
             elif event.key == K_8: new_space, new_env, new_idx = load_level(7)
+            elif event.key == K_9: new_space, new_env, new_idx = load_level(8)
+            elif event.key == K_0: new_space, new_env, new_idx = load_level(9)
             
             if new_space:
                 space = new_space
@@ -187,7 +191,7 @@ while running:
                 space.add(sonar_body)
                 my_sonar.body = sonar_body
                 
-                submarine.battery = 100
+                submarine.battery = 300
                 game_active = True
 
     if game_active:
@@ -255,7 +259,7 @@ while running:
     screen.blit(scaled_surface, (dest_x, dest_y))
 
     battery_text = font.render(f'Battery: {submarine.battery} | Map: {map_files[current_map_index]}', True, (255, 255, 255))
-    controls_text = font.render('Arrows: Move | 1-8: Change Map', True, (255, 255, 0))
+    controls_text = font.render('Arrows: Move | 1-0: Change Map', True, (255, 255, 0))
     
     screen.blit(battery_text, (10, 10))
     screen.blit(controls_text, (10, 30))
