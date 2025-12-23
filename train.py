@@ -142,17 +142,13 @@ def train():
             
             # Reverse Curriculum: Start near the end (2500), as mastery improves, push spawn back.
             if map3_sr > 0.8:
-                target_x_min = 100   # Mastery: Full Map
-                print(f"Map 3 Curriculum: HARD (SR {map3_sr:.0%})")
+                target_x_min = 100
             elif map3_sr > 0.6:
-                target_x_min = 1000  # Advanced
-                print(f"Map 3 Curriculum: MEDIUM (SR {map3_sr:.0%})")
+                target_x_min = 1000
             elif map3_sr > 0.3:
-                target_x_min = 1800  # Intermediate
-                print(f"Map 3 Curriculum: EASY (SR {map3_sr:.0%})")
+                target_x_min = 1800
             else:
-                target_x_min = 2500  # Beginner
-                print(f"Map 3 Curriculum: BEGINNER (SR {map3_sr:.0%})")
+                target_x_min = 2500
 
             # Add variance to prevent overfitting to exact pixels
             target_x_min += random.randint(-50, 50)
