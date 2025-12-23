@@ -19,7 +19,7 @@ mid_font = pygame.font.Font(None, 40)
 map_files = [
     "src/cave_environment/map1_basic.csv",
     "src/cave_environment/map2_jagged.csv",
-    "src/cave_environment/map3_narrow.csv",
+    "src/cave_environment/map3_jagged_long_narrow.csv",
     "src/cave_environment/map4_zigzag.csv",
     "src/cave_environment/map5_straight_batt.csv",
     "src/cave_environment/map6_jagged_batt.csv",
