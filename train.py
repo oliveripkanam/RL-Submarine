@@ -24,8 +24,8 @@ SAVE_INTERVAL = 50
 
 # Map configuration
 MAP_FILES = [
-    "src/cave_environment/tileset_basic.csv",
-    "src/cave_environment/tileset_editor_basic_jagged.csv"
+    "src/cave_environment/map1_basic.csv",
+    "src/cave_environment/map2_jagged.csv"
 ]
 
 # Initialize pygame
@@ -48,6 +48,13 @@ def load_level(map_index, spritesheet):
             body = pymunk.Body(body_type=pymunk.Body.STATIC)
             body.position = (tile.rect.centerx, tile.rect.centery)
             shape = pymunk.Poly.create_box(body, (tile.rect.width, tile.rect.height))
+            shape.filter = pymunk.ShapeFilter(group=1)
+            new_space.add(body, shape)
+
+        for obstacle in env.obstacles:
+            body = pymunk.Body(body_type=pymunk.Body.STATIC)
+            body.position = (obstacle.rect.centerx, obstacle.rect.centery)
+            shape = pymunk.Poly.create_box(body, (obstacle.rect.width, obstacle.rect.height))
             shape.filter = pymunk.ShapeFilter(group=1)
             new_space.add(body, shape)
             
@@ -155,6 +162,12 @@ def train():
             submarine.update()
             sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
             
+            # Check for battery pickups
+            hits = pygame.sprite.spritecollide(submarine, cave_env.batteries, True)
+            for hit in hits:
+                submarine.battery += 20
+                reward += 5 # Encourage collecting batteries
+            
             next_observation = sonar.get_observation()
             next_state = get_full_state(next_observation, submarine)
             
@@ -216,7 +229,7 @@ def train():
             if WATCH_MODE:
                 canvas = pygame.Surface((cave_env.environment_width, cave_env.environment_height))
                 canvas.fill((0, 128, 255))
-                canvas.blit(cave_env.environment_surface, (0, 0))
+                cave_env.draw(canvas)
                 submarine.draw(canvas)
                 sonar.draw(canvas, font)
                 

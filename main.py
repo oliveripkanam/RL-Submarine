@@ -13,12 +13,18 @@ screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
 
 spritesheet = SpriteSheet("src/cave_environment/tileset.png")
 font = pygame.font.Font(None, 25)
+big_font = pygame.font.Font(None, 80)
+mid_font = pygame.font.Font(None, 40)
 
 map_files = [
-    "src/cave_environment/tileset_basic.csv",
-    "src/cave_environment/tileset_editor_basic_jagged.csv",
-    "src/cave_environment/tileset_jagged_narrow.csv",
-    "src/cave_environment/tileset_zigzag.csv"
+    "src/cave_environment/map1_basic.csv",
+    "src/cave_environment/map2_jagged.csv",
+    "src/cave_environment/map3_narrow.csv",
+    "src/cave_environment/map4_zigzag.csv",
+    "src/cave_environment/map5_straight_batt.csv",
+    "src/cave_environment/map6_jagged_batt.csv",
+    "src/cave_environment/map7_straight_hard.csv",
+    "src/cave_environment/map8_jagged_hard.csv"
 ]
 current_map_index = 0
 
@@ -75,7 +81,16 @@ def load_level(map_index):
             shape = pymunk.Poly.create_box(body, (16, 16))
             shape.elasticity = 0.0
             shape.friction = 0.0
+            shape.filter = pymunk.ShapeFilter(group=1)
             new_space.add(body, shape)
+
+        for obstacle in env.obstacles:
+            body = pymunk.Body(body_type=pymunk.Body.STATIC)
+            body.position = (obstacle.rect.centerx, obstacle.rect.centery)
+            shape = pymunk.Poly.create_box(body, (obstacle.rect.width, obstacle.rect.height))
+            shape.filter = pymunk.ShapeFilter(group=1)
+            new_space.add(body, shape)
+
         return new_space, env, actual_index
     except Exception as e:
         print(f"Error loading map: {e}")
@@ -100,6 +115,7 @@ space.add(sonar_body)
 my_sonar = Sonar(space, sonar_body, num_rays=16, max_range=200, agent_size=30)
 
 running = True
+game_active = True
 clock = pygame.time.Clock()
 
 while running:
@@ -107,10 +123,32 @@ while running:
     for event in pygame.event.get():
         if event.type == QUIT:
             running = False
-            running = False
 
         if event.type == KEYDOWN:
-            if submarine.battery > 0:
+            if not game_active:
+                if event.key == K_SPACE:
+                    # Restart logic
+                    space, cave_env, _ = load_level(current_map_index)
+                    if not space: running = False
+                    
+                    MAP_WIDTH = cave_env.environment_width
+                    MAP_HEIGHT = cave_env.environment_height
+                    canvas = pygame.Surface((MAP_WIDTH, MAP_HEIGHT))
+                    
+                    sx, sy = find_safe_start(cave_env, MAP_WIDTH, MAP_HEIGHT)
+                    submarine = Submarine(sx, sy)
+                    submarine.battery = 100
+                    
+                    sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
+                    sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
+                    space.add(sonar_body)
+                    my_sonar.space = space
+                    my_sonar.body = sonar_body
+                    
+                    game_active = True
+                    continue
+
+            if game_active and submarine.battery > 0:
                 if event.key == K_UP: submarine.move_up()
                 elif event.key == K_DOWN: submarine.move_down()
                 elif event.key == K_LEFT: submarine.move_left()
@@ -127,6 +165,7 @@ while running:
             elif event.key == K_5: new_space, new_env, new_idx = load_level(4)
             elif event.key == K_6: new_space, new_env, new_idx = load_level(5)
             elif event.key == K_7: new_space, new_env, new_idx = load_level(6)
+            elif event.key == K_8: new_space, new_env, new_idx = load_level(7)
             
             if new_space:
                 space = new_space
@@ -149,44 +188,56 @@ while running:
                 my_sonar.body = sonar_body
                 
                 submarine.battery = 100
+                game_active = True
 
-    submarine.update()
-    sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
+    if game_active:
+        submarine.update()
+        sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
 
-    sensor_data = my_sonar.get_observation()
-    
-    # Construct full state for RL (19 inputs)
-    # [16 Sonar, 1 Battery, 2 Velocity]
-    import numpy as np
-    full_state = np.concatenate([
-        sensor_data,
-        [submarine.battery / 100.0],
-        [submarine.vel_x / submarine.max_speed, submarine.vel_y / submarine.max_speed]
-    ])
-    
-    hit_wall = False
-    for reading in sensor_data:
-        if reading == 0:
-            hit_wall = True
-            break
+        # Check for battery pickups
+        hits = pygame.sprite.spritecollide(submarine, cave_env.batteries, True)
+        for hit in hits:
+            submarine.battery += 20
+
+        sensor_data = my_sonar.get_observation()
+        
+        # Construct full state for RL (19 inputs)
+        # [16 Sonar, 1 Battery, 2 Velocity]
+        import numpy as np
+        full_state = np.concatenate([
+            sensor_data,
+            [submarine.battery / 100.0],
+            [submarine.vel_x / submarine.max_speed, submarine.vel_y / submarine.max_speed]
+        ])
+        
+        hit_wall = False
+        for reading in sensor_data:
+            if reading == 0:
+                hit_wall = True
+                break
+                
+        if hit_wall:
+            submarine.battery -= 10
+            submarine.vel_x *= -0.5
+            submarine.vel_y *= -0.5
+            submarine.true_x += submarine.vel_x * 5
+            submarine.true_y += submarine.vel_y * 5
+
+        if submarine.battery < 0:
+            submarine.battery = 0
             
-    if hit_wall:
-        submarine.battery -= 10
-        submarine.vel_x *= -0.5
-        submarine.vel_y *= -0.5
-        submarine.true_x += submarine.vel_x * 5
-        submarine.true_y += submarine.vel_y * 5
+        # Goal Check
+        if submarine.rect.right >= cave_env.environment_width - 10:
+            game_active = False # Pause game
 
-    if submarine.battery < 0:
-        submarine.battery = 0
 
     canvas.fill((0, 128, 255))
-    canvas.blit(cave_env.environment_surface, (0, 0))
+    cave_env.draw(canvas)
     
-    # Draw Start Line (Red)
+    # Draw start line (red)
     pygame.draw.line(canvas, (255, 0, 0), (start_x, 0), (start_x, MAP_HEIGHT), 2)
     
-    # Draw Finish Line (Green)
+    # Draw finish line (green)
     pygame.draw.line(canvas, (0, 255, 0), (MAP_WIDTH - 5, 0), (MAP_WIDTH - 5, MAP_HEIGHT), 5)
     
     submarine.draw(canvas)
@@ -204,10 +255,21 @@ while running:
     screen.blit(scaled_surface, (dest_x, dest_y))
 
     battery_text = font.render(f'Battery: {submarine.battery} | Map: {map_files[current_map_index]}', True, (255, 255, 255))
-    controls_text = font.render('Arrows: Move | 1-7: Change Map', True, (255, 255, 0))
+    controls_text = font.render('Arrows: Move | 1-8: Change Map', True, (255, 255, 0))
     
     screen.blit(battery_text, (10, 10))
     screen.blit(controls_text, (10, 30))
+    
+    if not game_active:
+        # Goal text
+        text_surf = big_font.render("REACHED GOAL!", True, (0, 255, 0))
+        text_rect = text_surf.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 40))
+        screen.blit(text_surf, text_rect)
+        
+        # Restart text
+        restart_surf = mid_font.render("Press SPACE to Restart", True, (255, 255, 255))
+        restart_rect = restart_surf.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 20))
+        screen.blit(restart_surf, restart_rect)
     
     pygame.display.flip()
     clock.tick(60)
