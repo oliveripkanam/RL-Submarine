@@ -15,7 +15,7 @@ class Submarine:
         self.true_x = float(x)
         self.true_y = float(y)
 
-        self.battery = 100
+        self.battery = 300
 
     def use_battery(self):
         self.battery -= 1
