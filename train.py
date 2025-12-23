@@ -115,9 +115,17 @@ def train():
     print(f"Starting training on Device: {agent.device}")
     print("Press TAB to toggle Fast/Watch Mode. Press ESC to quit.")
 
+    # Success tracking
+    success_history = []
+    map_stats = {
+        i: {'goals': 0, 'attempts': 0, 'total_reward': 0} 
+        for i in range(len(MAP_FILES))
+    }
+    
     for episode in range(NUM_EPISODES):
         # Randomly select a map for this episode
         map_idx = random.randint(0, len(MAP_FILES) - 1)
+        map_stats[map_idx]['attempts'] += 1
         
         # Load environment & physics
         space, cave_env = load_level(map_idx, spritesheet)
@@ -216,11 +224,14 @@ def train():
             if submarine.rect.right >= cave_env.environment_width - 10:
                 reward += 100
                 done = True
+                success_history.append(1)
+                map_stats[map_idx]['goals'] += 1
                 print(f"Episode {episode}: REACHED GOAL!")
 
             if submarine.battery <= 0:
                 reward -= 10
                 done = True
+                success_history.append(0)
             
             total_reward += reward
 
@@ -277,15 +288,44 @@ def train():
         # Cleanup physics body for next episode (Space is discarded anyway, but good practice)
         # space.remove(sonar_body) # Space is re-created next loop
         
+        map_stats[map_idx]['total_reward'] += total_reward
+        
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
         
+        # Calculate success rate
+        recent_success = success_history[-50:]
+        success_rate = sum(recent_success) / len(recent_success) if recent_success else 0.0
+
         if episode % 10 == 0:
-            print(f"Ep {episode} (Map {map_idx}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f}")
+            print(f"Ep {episode} (Map {map_idx}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f} | SR (last 50): {success_rate:.2%}")
 
         if episode % SAVE_INTERVAL == 0:
             agent.save(f"models/ddqn_submarine_ep{episode}.pth")
 
     agent.save("models/ddqn_submarine_final.pth")
+    
+    print("\n" + "="*50)
+    print("TRAINING COMPLETE - FINAL STATISTICS")
+    print("="*50)
+    print(f"{'Map File':<40} | {'Goals':<5} | {'Attempts':<8} | {'Success Rate':<12} | {'Avg Reward':<10}")
+    print("-" * 85)
+    
+    for i, filename in enumerate(MAP_FILES):
+        # Only show stats for maps that were actually used (if list was shortened)
+        if i in map_stats and map_stats[i]['attempts'] > 0:
+            stats = map_stats[i]
+            goals = stats['goals']
+            attempts = stats['attempts']
+            avg_reward = stats['total_reward'] / attempts
+            success_rate = (goals / attempts) * 100
+            
+            # Shorten filename for display
+            display_name = filename.split('/')[-1]
+            
+            print(f"{display_name:<40} | {goals:<5} | {attempts:<8} | {success_rate:>6.1f}%      | {avg_reward:>8.1f}")
+            
+    print("="*50)
+
     pygame.quit()
 
 if __name__ == "__main__":
