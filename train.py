@@ -25,15 +25,7 @@ SAVE_INTERVAL = 50
 # Map configuration
 MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
-    "src/cave_environment/map2_jagged.csv",
-    "src/cave_environment/map3_jagged_long_narrow.csv",
-    "src/cave_environment/map4_zigzag.csv",
-    "src/cave_environment/map5_straight_batt.csv",
-    "src/cave_environment/map6_jagged_batt.csv",
-    "src/cave_environment/map7_straight_hard.csv",
-    "src/cave_environment/map8_jagged_hard.csv",
-    "src/cave_environment/map9_long_batt.csv",
-    "src/cave_environment/map10_long_hard.csv"
+    "src/cave_environment/map2_jagged.csv"
 ]
 
 # Initialize pygame
@@ -134,6 +126,25 @@ def train():
 
         # Reset submarine
         start_x, start_y = 100, 300
+        
+       # safe start logic else it will end up starting in the walls
+        wall_rects = [t.rect for t in cave_env.environment_tiles]
+        found_start = False
+        for x in range(50, cave_env.environment_width - 50, 16):
+            valid_ys = []
+            for y in range(50, cave_env.environment_height - 50, 16):
+                test_rect = pygame.Rect(x, y, 30, 30)
+                if test_rect.collidelist(wall_rects) == -1:
+                    valid_ys.append(y)
+            if len(valid_ys) > 3:
+                start_x = x + 64
+                start_y = sum(valid_ys) // len(valid_ys)
+                found_start = True
+                break
+        
+        if not found_start:
+            start_x, start_y = 100, 300 # Fallback
+
         submarine = Submarine(start_x, start_y)
         submarine.battery = 300
         
@@ -226,7 +237,6 @@ def train():
                 done = True
                 success_history.append(1)
                 map_stats[map_idx]['goals'] += 1
-                print(f"Episode {episode}: REACHED GOAL!")
 
             if submarine.battery <= 0:
                 reward -= 10
@@ -296,7 +306,7 @@ def train():
         recent_success = success_history[-50:]
         success_rate = sum(recent_success) / len(recent_success) if recent_success else 0.0
 
-        if episode % 10 == 0:
+        if episode % 50 == 0:
             print(f"Ep {episode} (Map {map_idx}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f} | SR (last 50): {success_rate:.2%}")
 
         if episode % SAVE_INTERVAL == 0:
