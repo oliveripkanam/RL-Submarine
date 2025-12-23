@@ -8,9 +8,9 @@ class Submarine:
         self.vel_x = 0
         self.vel_y = 0
         self.acceleration = 2.0
-        self.friction = 0.96
+        self.friction = 0.93
         self.gravity = 0.05
-        self.max_speed = 8
+        self.max_speed = 7
 
         self.true_x = float(x)
         self.true_y = float(y)

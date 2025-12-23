@@ -65,9 +65,9 @@ def load_level(map_index, spritesheet):
         return None, None
 
 def get_full_state(sonar_data, submarine):
-    normalized_battery = submarine.battery / 300.0
-    norm_vx = (submarine.vel_x + 8.0) / 16.0 
-    norm_vy = (submarine.vel_y + 8.0) / 16.0
+    normalized_battery = submarine.battery / 500.0
+    norm_vx = (submarine.vel_x + 7.0) / 14.0
+    norm_vy = (submarine.vel_y + 7.0) / 14.0
     
     return np.concatenate([
         sonar_data,
@@ -113,14 +113,16 @@ def train():
 
     # Success tracking
     success_history = []
+    map3_history = []
     map_stats = {
         i: {'goals': 0, 'attempts': 0, 'total_reward': 0} 
         for i in range(len(MAP_FILES))
     }
     
     for episode in range(NUM_EPISODES):
-        # Randomly select a map for this episode
-        map_idx = random.randint(0, len(MAP_FILES) - 1)
+        # weight map 3 higher for now so it learns faster
+        map_idx = random.choices([0, 1, 2], weights=[15, 15, 70], k=1)[0]
+        
         map_stats[map_idx]['attempts'] += 1
         
         # Load environment & physics
@@ -131,10 +133,35 @@ def train():
         # Reset submarine
         start_x, start_y = 100, 300
         
-       # safe start logic else it will end up starting in the walls
+        # below's for map 3 so it learns faster
+        target_x_min = 50
+        
+        if map_idx == 2:
+            recent_map3 = map3_history[-20:]
+            map3_sr = sum(recent_map3) / len(recent_map3) if recent_map3 else 0.0
+            
+            # Reverse Curriculum: Start near the end (2500), as mastery improves, push spawn back.
+            if map3_sr > 0.8:
+                target_x_min = 100   # Mastery: Full Map
+                print(f"Map 3 Curriculum: HARD (SR {map3_sr:.0%})")
+            elif map3_sr > 0.6:
+                target_x_min = 1000  # Advanced
+                print(f"Map 3 Curriculum: MEDIUM (SR {map3_sr:.0%})")
+            elif map3_sr > 0.3:
+                target_x_min = 1800  # Intermediate
+                print(f"Map 3 Curriculum: EASY (SR {map3_sr:.0%})")
+            else:
+                target_x_min = 2500  # Beginner
+                print(f"Map 3 Curriculum: BEGINNER (SR {map3_sr:.0%})")
+
+            # Add variance to prevent overfitting to exact pixels
+            target_x_min += random.randint(-50, 50)
+            target_x_min = max(50, min(target_x_min, 2800))
+
+        # safe start logic else it will end up starting in the walls
         wall_rects = [t.rect for t in cave_env.environment_tiles]
         found_start = False
-        for x in range(50, cave_env.environment_width - 50, 16):
+        for x in range(target_x_min, cave_env.environment_width - 50, 16):
             valid_ys = []
             for y in range(50, cave_env.environment_height - 50, 16):
                 test_rect = pygame.Rect(x, y, 30, 30)
@@ -207,7 +234,7 @@ def train():
             
             # Encourage moving right (else it'll keep moving left)
             if action == 3: # Right
-                reward += 0.05
+                reward += 0.1
             elif action == 2: # Left
                 reward -= 0.05
             elif action == 4: # Glide
@@ -223,7 +250,7 @@ def train():
                     break
             
             if hit_wall:
-                reward -= 50
+                reward -= 20
                 submarine.battery -= 10
                 display_hit_msg = True
                 
@@ -244,12 +271,14 @@ def train():
                 reward += 100
                 done = True
                 success_history.append(1)
+                if map_idx == 2: map3_history.append(1)
                 map_stats[map_idx]['goals'] += 1
 
             if submarine.battery <= 0:
                 reward -= 10
                 done = True
                 success_history.append(0)
+                if map_idx == 2: map3_history.append(0)
             
             total_reward += reward
 
@@ -315,7 +344,7 @@ def train():
         if episode % 50 == 0:
             m_stats = map_stats[map_idx]
             map_sr = m_stats['goals'] / m_stats['attempts'] if m_stats['attempts'] > 0 else 0
-            print(f"Ep {episode} (Map {map_idx}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f} | SR (Map): {map_sr:.0%} | SR (Global 50): {success_rate:.0%}")
+            print(f"Ep {episode} (Map {map_idx + 1}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f} | SR (Map): {map_sr:.0%} | SR (Global 50): {success_rate:.0%}")
 
 
         if episode % SAVE_INTERVAL == 0:
