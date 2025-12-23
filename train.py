@@ -25,7 +25,8 @@ SAVE_INTERVAL = 50
 # Map configuration
 MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
-    "src/cave_environment/map2_jagged.csv"
+    "src/cave_environment/map2_jagged.csv",
+    "src/cave_environment/map3_jagged_long_narrow.csv"
 ]
 
 # Initialize pygame
@@ -91,7 +92,8 @@ def train():
     spritesheet = SpriteSheet("src/cave_environment/tileset.png")
     
     # Initialize agent
-    agent = DoubleDQNAgent(input_shape=19, num_actions=4)
+    # Actions: up, down, left, right, glide (do nothing)
+    agent = DoubleDQNAgent(input_shape=19, num_actions=5)
     epsilon = EPSILON_START
     
     if LOAD_MODEL:
@@ -99,8 +101,10 @@ def train():
             agent.load("models/ddqn_submarine_final.pth")
             print("Successfully loaded existing model!")
             epsilon = 0.5
-        except FileNotFoundError:
-            print("No existing model found, starting fresh.")
+        except Exception as e:
+            print(f"Could not load model ({e}), starting fresh with new action space.")
+            epsilon = 0.5 # Reset exploration
+
 
     total_steps = 0
 
@@ -146,7 +150,7 @@ def train():
             start_x, start_y = 100, 300 # Fallback
 
         submarine = Submarine(start_x, start_y)
-        submarine.battery = 300
+        submarine.battery = 500
         
         sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
         sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
@@ -185,6 +189,7 @@ def train():
             elif action == 1: submarine.move_down()
             elif action == 2: submarine.move_left()
             elif action == 3: submarine.move_right()
+            # Action 4 is glide so it does nothing and saves battery
             
             submarine.update()
             sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
@@ -205,6 +210,9 @@ def train():
                 reward += 0.05
             elif action == 2: # Left
                 reward -= 0.05
+            elif action == 4: # Glide
+                reward += 0.02 # Small reward for efficient gliding
+
 
             display_hit_msg = False
             
@@ -215,7 +223,7 @@ def train():
                     break
             
             if hit_wall:
-                reward -= 10
+                reward -= 50
                 submarine.battery -= 10
                 display_hit_msg = True
                 
@@ -295,9 +303,7 @@ def train():
             if done:
                 break
         
-        # Cleanup physics body for next episode (Space is discarded anyway, but good practice)
-        # space.remove(sonar_body) # Space is re-created next loop
-        
+        # Cleanup physics body for next episode
         map_stats[map_idx]['total_reward'] += total_reward
         
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
@@ -307,7 +313,10 @@ def train():
         success_rate = sum(recent_success) / len(recent_success) if recent_success else 0.0
 
         if episode % 50 == 0:
-            print(f"Ep {episode} (Map {map_idx}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f} | SR (last 50): {success_rate:.2%}")
+            m_stats = map_stats[map_idx]
+            map_sr = m_stats['goals'] / m_stats['attempts'] if m_stats['attempts'] > 0 else 0
+            print(f"Ep {episode} (Map {map_idx}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f} | SR (Map): {map_sr:.0%} | SR (Global 50): {success_rate:.0%}")
+
 
         if episode % SAVE_INTERVAL == 0:
             agent.save(f"models/ddqn_submarine_ep{episode}.pth")
