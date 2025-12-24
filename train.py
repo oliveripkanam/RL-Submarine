@@ -140,7 +140,7 @@ def train():
             recent_map3 = map3_history[-20:]
             map3_sr = sum(recent_map3) / len(recent_map3) if recent_map3 else 0.0
             
-            # Reverse Curriculum: Start near the end (2500), as mastery improves, push spawn back.
+            # Reverse curriculum: start near the end (2500), as mastery improves, push spawn back.
             if map3_sr > 0.8:
                 target_x_min = 100
             elif map3_sr > 0.6:
