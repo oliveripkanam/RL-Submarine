@@ -7,7 +7,7 @@ from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
 from src.entities.submarine import Submarine
 from src.sonar.sensors import Sonar
-from src.ai.agent import DoubleDQNAgent
+from src.ai.agent import DoubleDQNAgent, VanillaDQNAgent
 
 # Configuration
 WATCH_MODE = True
@@ -66,12 +66,14 @@ def train():
         shape.filter = pymunk.ShapeFilter(group=1)
         space.add(body, shape)
 
-    agent = DoubleDQNAgent(input_shape=19, num_actions=4)
+    agent = VanillaDQNAgent(input_shape=19, num_actions=4)
+    # agent = DoubleDQNAgent(input_shape=19, num_actions=4)
     epsilon = EPSILON_START
+    episode_loss = np.full(NUM_EPISODES, None, dtype=np.float32)
     
     if LOAD_MODEL:
         try:
-            agent.load("models/ddqn_submarine_final.pth")
+            agent.load("models/vanilla_dqn_submarine_final.pth")
             print("Successfully loaded existing model!")
             epsilon = 1
         except FileNotFoundError:
@@ -101,7 +103,7 @@ def train():
         total_reward = 0
         done = False
         display_hit_msg = False
-        
+        total_loss = 0.0
         for step in range(MAX_STEPS):
             # Event handling (Throttled in fast mode)
             if WATCH_MODE or step % 100 == 0:
@@ -181,6 +183,7 @@ def train():
             agent.memory.push(state, action, reward, next_state, done)
             
             loss = agent.train_step(BATCH_SIZE)
+            total_loss += loss if loss is not None else 0.0
             
             total_steps += 1
             if total_steps % TARGET_UPDATE == 0:
@@ -231,14 +234,16 @@ def train():
         space.remove(sonar_body)
         
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
-        
+        average_loss = total_loss / (step + 1)
+        episode_loss[episode] = average_loss
         if episode % 10 == 0:
-            print(f"Episode {episode}/{NUM_EPISODES} | Total Reward: {total_reward:.2f} | Epsilon: {epsilon:.2f}")
+            print(f"Episode {episode}/{NUM_EPISODES} | Total Reward: {total_reward:.2f} | Epsilon: {epsilon:.2f} | Loss: {average_loss:.4f} ")
 
         if episode % SAVE_INTERVAL == 0:
-            agent.save(f"models/ddqn_submarine_ep{episode}.pth")
-
-    agent.save("models/ddqn_submarine_final.pth")
+            agent.save(f"models/vanilla_dqn_submarine_ep{episode}.pth")
+            
+    np.save("models/vanilla_dqn_training_loss.npy", episode_loss)
+    agent.save("models/vanilla_dqn_submarine_final.pth")
     pygame.quit()
 
 if __name__ == "__main__":

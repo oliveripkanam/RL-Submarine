@@ -87,3 +87,36 @@ class DoubleDQNAgent:
     def load(self, filename):
         self.policy_net.load_state_dict(torch.load(filename))
         self.target_net.load_state_dict(self.policy_net.state_dict())
+
+class VanillaDQNAgent(DoubleDQNAgent):
+    def train_step(self, batch_size):
+        if len(self.memory) < batch_size:
+            return
+
+        state, action, reward, next_state, done = self.memory.sample(batch_size)
+
+        state_batch = torch.FloatTensor(np.array(state)).to(self.device)
+        action_batch = torch.LongTensor(action).unsqueeze(1).to(self.device)
+        reward_batch = torch.FloatTensor(reward).unsqueeze(1).to(self.device)
+        next_state_batch = torch.FloatTensor(np.array(next_state)).to(self.device)
+        done_batch = torch.FloatTensor(done).unsqueeze(1).to(self.device)
+
+        # Compute q-values for current state
+        q_values = self.policy_net(state_batch)
+        q_value = q_values.gather(1, action_batch)
+
+        # (Main change) Compute target q-values using vanilla dqn
+        with torch.no_grad():
+            # Coupled the action selection and evaluation
+            next_q_values = self.target_net(next_state_batch).max(1, keepdim=True)[0]
+            expected_q_value = reward_batch + (1 - done_batch) * self.gamma * next_q_values
+
+        loss = F.smooth_l1_loss(q_value, expected_q_value)
+
+        # Optimize the model
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
+        self.optimizer.step()
+
+        return loss.item()
