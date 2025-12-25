@@ -14,11 +14,10 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         
         # Neural network layers
-        # We use a deeper network (3 hidden layers) to capture the physics dynamics
-        self.fc1 = nn.Linear(input_shape, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 64)
-        self.out = nn.Linear(64, num_actions)
+        self.fc1 = nn.Linear(input_shape, 512)
+        self.fc2 = nn.Linear(512, 512)
+        self.fc3 = nn.Linear(512, 256)
+        self.out = nn.Linear(256, num_actions)
         
     def forward(self, x):
         """
@@ -30,4 +29,3 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.out(x)
-

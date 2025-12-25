@@ -1,5 +1,6 @@
 import pygame, csv
 from .spritesheet import SpriteSheet
+from src.entities.items import Battery, Obstacle
 
 # Reference: https://www.youtube.com/watch?v=37phHwLtaFg
 
@@ -18,6 +19,10 @@ class CaveEnvironment:
         self.tile_size = 16
         self.start_x, self.start_y= 0, 0
         self.spritesheet = spritesheet
+        
+        self.batteries = pygame.sprite.Group()
+        self.obstacles = pygame.sprite.Group()
+        
         self.environment_tiles = self.load_tiles(plot_filename)
         
         # Calculate dimensions based on the data we just loaded
@@ -52,7 +57,11 @@ class CaveEnvironment:
         for row in environment_data:
             x = 0
             for tile in row:
-                if tile != '-1':
+                if tile == '20': # Battery
+                    self.batteries.add(Battery(x * self.tile_size, y * self.tile_size))
+                elif tile == '21': # Obstacle
+                    self.obstacles.add(Obstacle(x * self.tile_size, y * self.tile_size))
+                elif tile != '-1':
                     environment_tiles.append(
                         Tile(
                             self.spritesheet.labels[int(tile) // 5][int(tile) % 5],
@@ -73,3 +82,5 @@ class CaveEnvironment:
             
     def draw(self, surface):
         surface.blit(self.environment_surface, (self.start_x, self.start_y))
+        self.batteries.draw(surface)
+        self.obstacles.draw(surface)
