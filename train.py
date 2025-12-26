@@ -4,6 +4,7 @@ import numpy as np
 import os
 import glob
 import random
+import math
 from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
 from src.entities.submarine import Submarine
@@ -16,7 +17,7 @@ LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previ
 NUM_EPISODES = 2000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
-EPSILON_START = 0.5
+EPSILON_START = 0.1
 EPSILON_END = 0.01
 EPSILON_DECAY = 0.999
 TARGET_UPDATE = 1000
@@ -66,7 +67,7 @@ def load_level(map_index, spritesheet):
         print(f"Error loading map {map_index}: {e}")
         return None, None
 
-def get_full_state(sonar_data, submarine, map_idx, env_width):
+def get_full_state(sonar_data, submarine, map_idx, env_width, batteries):
     normalized_battery = submarine.battery / 500.0
     norm_vx = (submarine.vel_x + 10.0) / 20.0
     norm_vy = (submarine.vel_y + 10.0) / 20.0
@@ -77,6 +78,27 @@ def get_full_state(sonar_data, submarine, map_idx, env_width):
     
     # Inject normalized X-position into the last slot of map_encoding
     map_encoding[-1] = submarine.true_x / env_width
+
+    # Battery sensor
+    closest_dist = float('inf')
+    bat_dx = 0.0
+    bat_dy = 0.0
+    
+    if batteries and len(batteries) > 0:
+        sub_x, sub_y = submarine.rect.centerx, submarine.rect.centery
+        for bat in batteries:
+            dx = bat.rect.centerx - sub_x
+            dy = bat.rect.centery - sub_y
+            dist = dx*dx + dy*dy
+            if dist < closest_dist:
+                closest_dist = dist
+                bat_dx = dx
+                bat_dy = dy
+        
+        # Normalize (assuming max view distance approx 1000px)
+        # We clamp it to -1.0 to 1.0 range
+        map_encoding[17] = max(-1.0, min(1.0, bat_dx / 1000.0))
+        map_encoding[18] = max(-1.0, min(1.0, bat_dy / 1000.0))
     
     return np.concatenate([
         sonar_data,
@@ -193,12 +215,28 @@ def train():
         
         # WEIGHTINGS
         # Map 1, 2, 3, 5, 6
-        map_idx = random.choices([0, 1, 2, 3, 4], weights=[10, 10, 10, 35, 35], k=1)[0]
+        # Focus heavily on the struggling maps (3 & 6) and maintain the others
+        map_idx = random.choices([0, 1, 2, 3, 4], weights=[10, 10, 35, 10, 35], k=1)[0]
         map_stats[map_idx]['attempts'] += 1
         
         # Load environment & physics from cache
         space, cave_env = preloaded_maps[map_idx]
         
+        # Respawn batteries, fix for disappearing batteries
+        cave_env.batteries.empty()
+        cave_env.obstacles.empty()
+
+        import csv
+        from src.entities.items import Battery, Obstacle
+        with open(MAP_FILES[map_idx]) as csvfile:
+            reader = csv.reader(csvfile)
+            for y, row in enumerate(reader):
+                for x, tile in enumerate(row):
+                    if tile == '20': # Battery
+                        cave_env.batteries.add(Battery(x * 16, y * 16))
+                    elif tile == '21': # Obstacle
+                        cave_env.obstacles.add(Obstacle(x * 16, y * 16))
+
         # Clean up previous dynamic bodies
         for body in space.bodies:
             if body.body_type == pymunk.Body.KINEMATIC or body.body_type == pymunk.Body.DYNAMIC:
@@ -261,7 +299,7 @@ def train():
         sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
         sonar = Sonar(space, sonar_body)
         
-        state = get_full_state(sonar.get_observation(), submarine, map_idx, cave_env.environment_width)
+        state = get_full_state(sonar.get_observation(), submarine, map_idx, cave_env.environment_width, cave_env.batteries)
         total_reward = 0
         done = False
         
@@ -285,7 +323,7 @@ def train():
                         if event.key == pygame.K_TAB:
                             WATCH_MODE = not WATCH_MODE
                             print(f"Watch Mode: {WATCH_MODE}")
-            elif step % 10 == 0: # Check every 10 steps in Fast Mode
+            if step % 10 == 0: # Check every 10 steps in Fast Mode
                  for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         pygame.quit()
@@ -298,12 +336,22 @@ def train():
                             WATCH_MODE = not WATCH_MODE
                             print(f"Watch Mode: {WATCH_MODE}")
 
+            # Dynamic epsilon
+            current_epsilon = epsilon
+
             if step % 4 == 0:
-                action = agent.select_action(state, epsilon)
+                action = agent.select_action(state, current_epsilon)
             
             # Save previous position
             prev_x = submarine.true_x
             prev_y = submarine.true_y
+            
+            # Battery homing reward before moving
+            prev_bat_dist = float('inf')
+            if map_idx in [3, 4] and len(cave_env.batteries) > 0:
+                for bat in cave_env.batteries:
+                    d = math.hypot(bat.rect.centerx - submarine.rect.centerx, bat.rect.centery - submarine.rect.centery)
+                    if d < prev_bat_dist: prev_bat_dist = d
             
             reward = -0.1 # Base penalty
 
@@ -323,14 +371,21 @@ def train():
             submarine.update()
             sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
             
+            # Battery homing reward after moving
+            curr_bat_dist = float('inf')
+            if map_idx in [3, 4] and len(cave_env.batteries) > 0:
+                for bat in cave_env.batteries:
+                    d = math.hypot(bat.rect.centerx - submarine.rect.centerx, bat.rect.centery - submarine.rect.centery)
+                    if d < curr_bat_dist: curr_bat_dist = d
+            
+            # Apply homing reward
+            battery_picked_up_this_frame = False
+            
             # Distance-based reward
             dist_x = submarine.true_x - prev_x
             
             # Context-aware grading
-            if map_idx == 2: # Map 3
-                reward += dist_x * 1.0
-            else:
-                reward += dist_x * 2.5
+            reward += dist_x * 2.5
             
             # Cowardice penalty (Only for speed maps)
             if dist_x < -0.5:
@@ -342,11 +397,20 @@ def train():
             hits = pygame.sprite.spritecollide(submarine, cave_env.batteries, True)
             for hit in hits:
                 submarine.battery += 300
-                reward += 2.0
+                reward += 1000.0 # Massive reward to make it irresistible
                 current_run_picked_battery = True
+                battery_picked_up_this_frame = True
+            
+            # Apply homing reward
+            if map_idx in [3, 4] and not battery_picked_up_this_frame:
+                if prev_bat_dist != float('inf') and curr_bat_dist != float('inf'):
+                    diff = prev_bat_dist - curr_bat_dist
+                    # If diff is positive = we got closer, reward it
+                    # If diff is negative = we moved away, penalize it
+                    reward += diff * 4.0 
             
             next_observation = sonar.get_observation()
-            next_state = get_full_state(next_observation, submarine, map_idx, cave_env.environment_width)
+            next_state = get_full_state(next_observation, submarine, map_idx, cave_env.environment_width, cave_env.batteries)
 
             # Store experience in replay buffer
             agent.memory.push(state, action, reward, next_state, done)
@@ -537,7 +601,8 @@ def train():
     print("-" * 90)
 
     for i, filename in enumerate(MAP_FILES):
-        if i in battery_stats and map_stats[i]['attempts'] > 0:
+        # Show battery stats for map 5 and 6
+        if i in [3, 4] and i in battery_stats and map_stats[i]['attempts'] > 0:
             bs = battery_stats[i]
             display_name = filename.split('/')[-1]
             print(f"{display_name:<25} | {bs['picked_up']:<11} | {bs['picked_success']:<11} | {bs['picked_fail']:<11} | {bs['ignored_fail']:<12} | {bs['ignored_success']:<12}")
