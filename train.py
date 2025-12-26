@@ -16,7 +16,7 @@ LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previ
 NUM_EPISODES = 2000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
-EPSILON_START = 0.1
+EPSILON_START = 0.5
 EPSILON_END = 0.01
 EPSILON_DECAY = 0.999
 TARGET_UPDATE = 1000
@@ -109,16 +109,6 @@ def train():
     agent = DoubleDQNAgent(input_shape=39, num_actions=5)
     epsilon = EPSILON_START
     
-    if LOAD_MODEL:
-        try:
-            agent.load("models/ddqn_submarine_final.pth")
-            print("Successfully loaded existing model!")
-            epsilon = 0.3
-        except Exception as e:
-            print(f"Could not load model ({e}). This is expected if you upgraded the Network Architecture (Bigger Brain). Starting fresh!")
-            epsilon = 1.0 # Reset exploration for new brain
-
-
     total_steps = 0
 
     print(f"Starting training on Device: {agent.device}")
@@ -134,8 +124,30 @@ def train():
         i: {'goals': 0, 'attempts': 0, 'total_reward': 0} 
         for i in range(len(MAP_FILES))
     }
-    
+
     start_episode = 0
+
+    if LOAD_MODEL:
+        model_path = "models/ddqn_submarine_final.pth"
+        if not os.path.exists(model_path):
+            # Try to find the latest checkpoint
+            list_of_files = glob.glob('models/ddqn_submarine_ep*.pth')
+            if list_of_files:
+                model_path = max(list_of_files, key=os.path.getctime)
+                # Try to extract episode number
+                try:
+                    start_episode = int(model_path.split("ep")[-1].split(".")[0])
+                    print(f"Found checkpoint: {model_path} (Episode {start_episode})")
+                except:
+                    pass
+        
+        try:
+            agent.load(model_path)
+            print(f"Successfully loaded model: {model_path}")
+            epsilon = 0.5
+        except Exception as e:
+            print(f"Could not load model ({e}). Starting fresh!")
+            epsilon = 1.0 # Reset exploration for new brain
     
     # Load training state if exists and we are loading model
     if LOAD_MODEL and os.path.exists("training_state.npy"):
@@ -147,6 +159,8 @@ def train():
             print(f"Loaded training state. Histories - M1:{len(map1_history)} M2:{len(map2_history)} M3:{len(map3_history)}")
         except Exception as e:
             print(f"Error loading training state: {e}")
+    else:
+        print("Starting fresh training state.")
 
     for episode in range(start_episode, NUM_EPISODES):
 
@@ -185,19 +199,19 @@ def train():
         
         if map_idx == 2: # Map 3
             # Reverse curriculum
-            if map3_sr > 0.8:
+            if map3_sr > 0.85:
                 target_x_min = 100
-            elif map3_sr > 0.7:
+            elif map3_sr > 0.75:
                 target_x_min = 500
-            elif map3_sr > 0.6:
+            elif map3_sr > 0.65:
                 target_x_min = 900
-            elif map3_sr > 0.5:
+            elif map3_sr > 0.55:
                 target_x_min = 1300
-            elif map3_sr > 0.4:
+            elif map3_sr > 0.45:
                 target_x_min = 1700
-            elif map3_sr > 0.3:
+            elif map3_sr > 0.35:
                 target_x_min = 2000
-            elif map3_sr > 0.2:
+            elif map3_sr > 0.25:
                 target_x_min = 2200
             else:
                 target_x_min = 2500
@@ -303,7 +317,10 @@ def train():
             dist_x = submarine.true_x - prev_x
             
             # Context-aware grading
-            reward += dist_x * 2.5
+            if map_idx == 2: # Map 3
+                reward += dist_x * 1.0
+            else:
+                reward += dist_x * 2.5
             
             # Cowardice penalty (Only for speed maps)
             if dist_x < -0.5:
@@ -320,6 +337,12 @@ def train():
             next_observation = sonar.get_observation()
             next_state = get_full_state(next_observation, submarine, map_idx)
 
+            # Store experience in replay buffer
+            agent.memory.push(state, action, reward, next_state, done)
+            
+            # Accumulate reward
+            total_reward += reward
+
             display_hit_msg = False
             
             hit_wall = False
@@ -330,7 +353,7 @@ def train():
             
             if hit_wall:
                 # Context-aware grading
-                penalty = 2
+                penalty = 5 if map_idx == 2 else 2
                 reward -= penalty
                 
                 submarine.battery -= 10
@@ -438,15 +461,6 @@ def train():
         # Calculate success rate
         recent_success = success_history[-50:]
         success_rate = sum(recent_success) / len(recent_success) if recent_success else 0.0
-
-        if episode % 50 == 0:
-            # Calculate session stats
-            session_attempts = map_stats[map_idx]['attempts']
-            session_goals = map_stats[map_idx]['goals']
-            session_total_reward = map_stats[map_idx]['total_reward']
-            
-            map_sr_session = session_goals / session_attempts if session_attempts > 0 else 0.0
-            map_avg_reward_session = session_total_reward / session_attempts if session_attempts > 0 else 0.0
 
         if episode % SAVE_INTERVAL == 0:
             agent.save(f"models/ddqn_submarine_ep{episode}.pth")
