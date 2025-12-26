@@ -23,8 +23,8 @@ map_files = [
     "src/cave_environment/map4_zigzag.csv",
     "src/cave_environment/map5_one_battery.csv",
     "src/cave_environment/map6_three_battery.csv",
-    "src/cave_environment/map7_straight_hard.csv",
-    "src/cave_environment/map8_jagged_hard.csv",
+    "src/cave_environment/map7_obstacle_simple.csv",
+    "src/cave_environment/map8_obstacle_hard.csv",
     "src/cave_environment/map9_long_batt.csv",
     "src/cave_environment/map10_long_hard.csv"
 ]
@@ -213,6 +213,11 @@ while running:
         for hit in hits:
             submarine.battery += 300
 
+        # Check for obstacle collisions (Pufferfish)
+        obs_hits = pygame.sprite.spritecollide(submarine, cave_env.obstacles, True)
+        for hit in obs_hits:
+            submarine.battery -= 500
+
         sensor_data = my_sonar.get_observation()
         
         # Construct full state for RL (19 inputs)
@@ -237,8 +242,9 @@ while running:
             submarine.true_x += submarine.vel_x * 5
             submarine.true_y += submarine.vel_y * 5
 
-        if submarine.battery < 0:
+        if submarine.battery <= 0:
             submarine.battery = 0
+            game_active = False
             
         # Goal Check
         if submarine.rect.right >= cave_env.environment_width - 10:
@@ -275,10 +281,16 @@ while running:
     screen.blit(controls_text, (10, 30))
     
     if not game_active:
-        # Goal text
-        text_surf = big_font.render("REACHED GOAL!", True, (0, 255, 0))
-        text_rect = text_surf.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 40))
-        screen.blit(text_surf, text_rect)
+        if submarine.battery <= 0:
+            # Game Over text
+            text_surf = big_font.render("GAME OVER", True, (255, 0, 0))
+            text_rect = text_surf.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 40))
+            screen.blit(text_surf, text_rect)
+        else:
+            # Goal text
+            text_surf = big_font.render("REACHED GOAL!", True, (0, 255, 0))
+            text_rect = text_surf.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 40))
+            screen.blit(text_surf, text_rect)
         
         # Restart text
         restart_surf = mid_font.render("Press SPACE to Restart", True, (255, 255, 255))

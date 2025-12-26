@@ -30,6 +30,8 @@ MAP_FILES = [
     "src/cave_environment/map3_jagged_long_narrow.csv",
     "src/cave_environment/map5_one_battery.csv",
     "src/cave_environment/map6_three_battery.csv",
+    "src/cave_environment/map7_obstacle_simple.csv",
+    "src/cave_environment/map8_obstacle_hard.csv",
 ]
 
 # Initialize pygame
@@ -163,6 +165,17 @@ def train():
         }
         for i in range(len(MAP_FILES))
     }
+    
+    # Obstacle stats tracking
+    obstacle_stats = {
+        i: {
+            'avoided_won': 0,
+            'avoided_died': 0,
+            'hit_died': 0,
+            'hit_won': 0
+        }
+        for i in range(len(MAP_FILES))
+    }
 
     start_episode = 0
 
@@ -214,9 +227,8 @@ def train():
         map3_sr = sum(recent_map3) / len(recent_map3) if recent_map3 else 0.0
         
         # WEIGHTINGS
-        # Map 1, 2, 3, 5, 6
-        # Focus heavily on the struggling maps (3 & 6) and maintain the others
-        map_idx = random.choices([0, 1, 2, 3, 4], weights=[10, 10, 35, 10, 35], k=1)[0]
+        # Map 1, 2, 3, 5, 6, 7, 8
+        map_idx = random.choices([0, 1, 2, 3, 4, 5, 6], weights=[5, 5, 10, 10, 10, 30, 30], k=1)[0]
         map_stats[map_idx]['attempts'] += 1
         
         # Load environment & physics from cache
@@ -294,6 +306,7 @@ def train():
             submarine.battery = 600
             
         current_run_picked_battery = False
+        hit_obstacle_this_run = False
         
         sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
         sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
@@ -400,6 +413,12 @@ def train():
                 reward += 1000.0 # Massive reward to make it irresistible
                 current_run_picked_battery = True
                 battery_picked_up_this_frame = True
+
+            # Check for obstacle collisions (Pufferfish)
+            obs_hits = pygame.sprite.spritecollide(submarine, cave_env.obstacles, True)
+            for hit in obs_hits:
+                submarine.battery -= 500
+                hit_obstacle_this_run = True
             
             # Apply homing reward
             if map_idx in [3, 4] and not battery_picked_up_this_frame:
@@ -545,6 +564,18 @@ def train():
             else:
                 battery_stats[map_idx]['ignored_fail'] += 1
         
+        # Update obstacle stats
+        if hit_obstacle_this_run:
+            if is_success:
+                obstacle_stats[map_idx]['hit_won'] += 1
+            else:
+                obstacle_stats[map_idx]['hit_died'] += 1
+        else:
+            if is_success:
+                obstacle_stats[map_idx]['avoided_won'] += 1
+            else:
+                obstacle_stats[map_idx]['avoided_died'] += 1
+
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
         
         # Calculate success rate
@@ -606,6 +637,20 @@ def train():
             bs = battery_stats[i]
             display_name = filename.split('/')[-1]
             print(f"{display_name:<25} | {bs['picked_up']:<11} | {bs['picked_success']:<11} | {bs['picked_fail']:<11} | {bs['ignored_fail']:<12} | {bs['ignored_success']:<12}")
+    print("="*50)
+
+    print("\n" + "="*50)
+    print("OBSTACLE STATS")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Avoid(Win)':<11} | {'Avoid(Die)':<11} | {'Hit(Die)':<11} | {'Hit(Win)':<11}")
+    print("-" * 90)
+
+    for i, filename in enumerate(MAP_FILES):
+        # Show obstacle stats for map 7 and 8
+        if i in [5, 6] and i in obstacle_stats and map_stats[i]['attempts'] > 0:
+            os_stats = obstacle_stats[i]
+            display_name = filename.split('/')[-1]
+            print(f"{display_name:<25} | {os_stats['avoided_won']:<11} | {os_stats['avoided_died']:<11} | {os_stats['hit_died']:<11} | {os_stats['hit_won']:<11}")
     print("="*50)
     
     # Save loss data
