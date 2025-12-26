@@ -27,7 +27,6 @@ MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
     "src/cave_environment/map2_jagged.csv",
     "src/cave_environment/map3_jagged_long_narrow.csv",
-    # "src/cave_environment/map4_zigzag.csv"
 ]
 
 # Initialize pygame
@@ -131,7 +130,6 @@ def train():
     map1_history = []
     map2_history = []
     map3_history = []
-    map4_history = []
     map_stats = {
         i: {'goals': 0, 'attempts': 0, 'total_reward': 0} 
         for i in range(len(MAP_FILES))
@@ -146,8 +144,7 @@ def train():
             map1_history = state_data.get('map1_history', [])
             map2_history = state_data.get('map2_history', [])
             map3_history = state_data.get('map3_history', [])
-            map4_history = state_data.get('map4_history', [])
-            print(f"Loaded training state. Histories - M1:{len(map1_history)} M2:{len(map2_history)} M3:{len(map3_history)} M4:{len(map4_history)}")
+            print(f"Loaded training state. Histories - M1:{len(map1_history)} M2:{len(map2_history)} M3:{len(map3_history)}")
         except Exception as e:
             print(f"Error loading training state: {e}")
 
@@ -163,13 +160,8 @@ def train():
         recent_map3 = map3_history[-50:]
         map3_sr = sum(recent_map3) / len(recent_map3) if recent_map3 else 0.0
         
-        # recent_map4 = map4_history[-50:]
-        # map4_sr = sum(recent_map4) / len(recent_map4) if recent_map4 else 0.0
-
         # WEIGHTINGS
-        # map_idx = random.choices([0, 1, 2, 3], weights=[10, 10, 40, 40], k=1)[0]
         map_idx = random.choices([0, 1, 2], weights=[10, 10, 80], k=1)[0]
-
         map_stats[map_idx]['attempts'] += 1
         
         # Load environment & physics from cache
@@ -214,29 +206,6 @@ def train():
             target_x_min += random.randint(-50, 50)
             target_x_min = max(50, min(target_x_min, 2800))
             
-        # elif map_idx == 3: # Map 4
-        #     # below's for map 4 so it learns faster
-        #     if map4_sr > 0.8:
-        #         target_x_min = 50      # Do the whole thing
-        #     elif map4_sr > 0.7:
-        #         target_x_min = 500
-        #     elif map4_sr > 0.6:
-        #         target_x_min = 900
-        #     elif map4_sr > 0.5:
-        #         target_x_min = 1200    # Do half
-        #     elif map4_sr > 0.4:
-        #         target_x_min = 1500
-        #     elif map4_sr > 0.3:
-        #         target_x_min = 1700
-        #     elif map4_sr > 0.2:
-        #         target_x_min = 1900
-        #     else:
-        #         target_x_min = 2100    # Just the end bit
-
-        #     # Add variance
-        #     target_x_min += random.randint(-50, 50)
-        #     target_x_min = max(50, min(target_x_min, 2300))
-
         # safe start logic
         wall_rects = [t.rect for t in cave_env.environment_tiles]
         wall_rects.extend([o.rect for o in cave_env.obstacles])
@@ -244,9 +213,6 @@ def train():
         
         for x in range(target_x_min, cave_env.environment_width - 50, 20):
              valid_ys = []
-             # to prevent spawning in the ceiling/floor void for map 4 
-             # search_y_start = 200 if map_idx == 3 else 50
-             # search_y_end = 600 if map_idx == 3 else cave_env.environment_height - 50
              search_y_start = 50
              search_y_end = cave_env.environment_height - 50
              
@@ -265,8 +231,6 @@ def train():
         if not found_start:
             if map_idx == 2:
                 start_x, start_y = target_x_min, 300
-            # elif map_idx == 3:
-            #     start_x, start_y = target_x_min, 400
         submarine = Submarine(start_x, start_y)
         
         sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
@@ -339,11 +303,6 @@ def train():
             dist_x = submarine.true_x - prev_x
             
             # Context-aware grading
-            # if map_idx == 3:
-            #     # Map 4: Low speed bonus, no retreat penalty
-            #     reward += dist_x * 1.0 
-            # else:
-            # Maps 1-3: High speed bonus, punish retreat
             reward += dist_x * 2.5
             
             # Cowardice penalty (Only for speed maps)
@@ -361,7 +320,6 @@ def train():
             next_observation = sonar.get_observation()
             next_state = get_full_state(next_observation, submarine, map_idx)
 
-
             display_hit_msg = False
             
             hit_wall = False
@@ -372,7 +330,6 @@ def train():
             
             if hit_wall:
                 # Context-aware grading
-                # penalty = 5 if map_idx == 3 else 2
                 penalty = 2
                 reward -= penalty
                 
@@ -398,7 +355,6 @@ def train():
                 if map_idx == 0: map1_history.append(1)
                 if map_idx == 1: map2_history.append(1)
                 if map_idx == 2: map3_history.append(1)
-                # if map_idx == 3: map4_history.append(1)
                 map_stats[map_idx]['goals'] += 1
 
             if submarine.battery <= 0:
@@ -408,7 +364,6 @@ def train():
                 if map_idx == 0: map1_history.append(0)
                 if map_idx == 1: map2_history.append(0)
                 if map_idx == 2: map3_history.append(0)
-                # if map_idx == 3: map4_history.append(0)
             
             # Stagnation check
             stagnation_timer += 1
@@ -420,18 +375,10 @@ def train():
                     if map_idx == 0: map1_history.append(0)
                     if map_idx == 1: map2_history.append(0)
                     if map_idx == 2: map3_history.append(0)
-                    # if map_idx == 3: map4_history.append(0)
                 else:
                     # Reset timer and position if moved enough
                     stagnation_timer = 0
                     stagnation_start_x = submarine.true_x
-
-            total_reward += reward
-
-            # Push experience every step so we don't miss crashes
-            agent.memory.push(state, action, reward, next_state, done)
-
-            # Train only every 4 steps (to save compute)
             if step % 4 == 0:
                 loss = agent.train_step(BATCH_SIZE)
                 if loss is not None:
@@ -508,8 +455,7 @@ def train():
             state_data = {
                 'map1_history': map1_history,
                 'map2_history': map2_history,
-                'map3_history': map3_history,
-                'map4_history': map4_history
+                'map3_history': map3_history
             }
             np.save("training_state.npy", state_data)
 
@@ -519,8 +465,7 @@ def train():
     state_data = {
         'map1_history': map1_history,
         'map2_history': map2_history,
-        'map3_history': map3_history,
-        'map4_history': map4_history
+        'map3_history': map3_history
     }
     np.save("training_state.npy", state_data)
     
