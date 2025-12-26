@@ -27,6 +27,8 @@ MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
     "src/cave_environment/map2_jagged.csv",
     "src/cave_environment/map3_jagged_long_narrow.csv",
+    "src/cave_environment/map5_one_battery.csv",
+    "src/cave_environment/map6_three_battery.csv",
 ]
 
 # Initialize pygame
@@ -64,7 +66,7 @@ def load_level(map_index, spritesheet):
         print(f"Error loading map {map_index}: {e}")
         return None, None
 
-def get_full_state(sonar_data, submarine, map_idx):
+def get_full_state(sonar_data, submarine, map_idx, env_width):
     normalized_battery = submarine.battery / 500.0
     norm_vx = (submarine.vel_x + 10.0) / 20.0
     norm_vy = (submarine.vel_y + 10.0) / 20.0
@@ -72,6 +74,9 @@ def get_full_state(sonar_data, submarine, map_idx):
     map_encoding = [0.0] * 20
     if map_idx < 20:
         map_encoding[map_idx] = 1.0
+    
+    # Inject normalized X-position into the last slot of map_encoding
+    map_encoding[-1] = submarine.true_x / env_width
     
     return np.concatenate([
         sonar_data,
@@ -124,6 +129,18 @@ def train():
         i: {'goals': 0, 'attempts': 0, 'total_reward': 0} 
         for i in range(len(MAP_FILES))
     }
+    
+    # Battery stats tracking
+    battery_stats = {
+        i: {
+            'picked_up': 0,      # Total runs where at least 1 battery was grabbed
+            'picked_success': 0, # Grabbed battery AND reached goal
+            'picked_fail': 0,    # Grabbed battery BUT died
+            'ignored_fail': 0,   # Ignored battery AND died
+            'ignored_success': 0 # Ignored battery AND reached goal
+        }
+        for i in range(len(MAP_FILES))
+    }
 
     start_episode = 0
 
@@ -144,7 +161,7 @@ def train():
         try:
             agent.load(model_path)
             print(f"Successfully loaded model: {model_path}")
-            epsilon = 0.5
+            epsilon = EPSILON_START
         except Exception as e:
             print(f"Could not load model ({e}). Starting fresh!")
             epsilon = 1.0 # Reset exploration for new brain
@@ -175,7 +192,8 @@ def train():
         map3_sr = sum(recent_map3) / len(recent_map3) if recent_map3 else 0.0
         
         # WEIGHTINGS
-        map_idx = random.choices([0, 1, 2], weights=[10, 10, 80], k=1)[0]
+        # Map 1, 2, 3, 5, 6
+        map_idx = random.choices([0, 1, 2, 3, 4], weights=[10, 10, 10, 35, 35], k=1)[0]
         map_stats[map_idx]['attempts'] += 1
         
         # Load environment & physics from cache
@@ -198,23 +216,7 @@ def train():
         target_x_min = 50
         
         if map_idx == 2: # Map 3
-            # Reverse curriculum
-            if map3_sr > 0.85:
-                target_x_min = 100
-            elif map3_sr > 0.75:
-                target_x_min = 500
-            elif map3_sr > 0.65:
-                target_x_min = 900
-            elif map3_sr > 0.55:
-                target_x_min = 1300
-            elif map3_sr > 0.45:
-                target_x_min = 1700
-            elif map3_sr > 0.35:
-                target_x_min = 2000
-            elif map3_sr > 0.25:
-                target_x_min = 2200
-            else:
-                target_x_min = 2500
+            target_x_min = 100
 
             # Add variance to prevent overfitting to exact pixels
             target_x_min += random.randint(-50, 50)
@@ -247,11 +249,19 @@ def train():
                 start_x, start_y = target_x_min, 300
         submarine = Submarine(start_x, start_y)
         
+        # Custom difficulty, less battery for map 5 & 6
+        if map_idx in [3, 4]:
+            submarine.battery = 300
+        else:
+            submarine.battery = 600
+            
+        current_run_picked_battery = False
+        
         sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
         sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
         sonar = Sonar(space, sonar_body)
         
-        state = get_full_state(sonar.get_observation(), submarine, map_idx)
+        state = get_full_state(sonar.get_observation(), submarine, map_idx, cave_env.environment_width)
         total_reward = 0
         done = False
         
@@ -331,11 +341,12 @@ def train():
             # Check for battery pickups
             hits = pygame.sprite.spritecollide(submarine, cave_env.batteries, True)
             for hit in hits:
-                submarine.battery += 20
+                submarine.battery += 300
                 reward += 2.0
+                current_run_picked_battery = True
             
             next_observation = sonar.get_observation()
-            next_state = get_full_state(next_observation, submarine, map_idx)
+            next_state = get_full_state(next_observation, submarine, map_idx, cave_env.environment_width)
 
             # Store experience in replay buffer
             agent.memory.push(state, action, reward, next_state, done)
@@ -353,7 +364,7 @@ def train():
             
             if hit_wall:
                 # Context-aware grading
-                penalty = 5 if map_idx == 2 else 2
+                penalty = 2
                 reward -= penalty
                 
                 submarine.battery -= 10
@@ -456,6 +467,20 @@ def train():
         # Cleanup physics body for next episode
         map_stats[map_idx]['total_reward'] += total_reward
         
+        # Update battery stats
+        is_success = success_history[-1] == 1
+        if current_run_picked_battery:
+            battery_stats[map_idx]['picked_up'] += 1
+            if is_success:
+                battery_stats[map_idx]['picked_success'] += 1
+            else:
+                battery_stats[map_idx]['picked_fail'] += 1
+        else:
+            if is_success:
+                battery_stats[map_idx]['ignored_success'] += 1
+            else:
+                battery_stats[map_idx]['ignored_fail'] += 1
+        
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
         
         # Calculate success rate
@@ -503,6 +528,19 @@ def train():
             
             print(f"{display_name:<40} | {goals:<5} | {attempts:<8} | {success_rate:>6.1f}%      | {avg_reward:>8.1f}")
             
+    print("="*50)
+
+    print("\n" + "="*50)
+    print("BATTERY STATS")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Picked(All)':<11} | {'Picked(Win)':<11} | {'Picked(Die)':<11} | {'Ignored(Die)':<12} | {'Ignored(Win)':<12}")
+    print("-" * 90)
+
+    for i, filename in enumerate(MAP_FILES):
+        if i in battery_stats and map_stats[i]['attempts'] > 0:
+            bs = battery_stats[i]
+            display_name = filename.split('/')[-1]
+            print(f"{display_name:<25} | {bs['picked_up']:<11} | {bs['picked_success']:<11} | {bs['picked_fail']:<11} | {bs['ignored_fail']:<12} | {bs['ignored_success']:<12}")
     print("="*50)
     
     # Save loss data

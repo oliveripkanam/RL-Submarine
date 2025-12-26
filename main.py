@@ -20,8 +20,9 @@ map_files = [
     "src/cave_environment/map1_basic.csv",
     "src/cave_environment/map2_jagged.csv",
     "src/cave_environment/map3_jagged_long_narrow.csv",
-    "src/cave_environment/map5_straight_batt.csv",
-    "src/cave_environment/map6_jagged_batt.csv",
+    "src/cave_environment/map4_zigzag.csv",
+    "src/cave_environment/map5_one_battery.csv",
+    "src/cave_environment/map6_three_battery.csv",
     "src/cave_environment/map7_straight_hard.csv",
     "src/cave_environment/map8_jagged_hard.csv",
     "src/cave_environment/map9_long_batt.csv",
@@ -108,6 +109,10 @@ canvas = pygame.Surface((MAP_WIDTH, MAP_HEIGHT))
 
 start_x, start_y = find_safe_start(cave_env, MAP_WIDTH, MAP_HEIGHT)
 submarine = Submarine(start_x, start_y)
+if current_map_index in [4, 5]:
+    submarine.battery = 300
+else:
+    submarine.battery = 600
 
 sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
 sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
@@ -138,7 +143,10 @@ while running:
                     
                     sx, sy = find_safe_start(cave_env, MAP_WIDTH, MAP_HEIGHT)
                     submarine = Submarine(sx, sy)
-                    submarine.battery = 300
+                    if current_map_index in [4, 5]:
+                        submarine.battery = 300
+                    else:
+                        submarine.battery = 600
                     
                     sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
                     sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
@@ -190,7 +198,10 @@ while running:
                 space.add(sonar_body)
                 my_sonar.body = sonar_body
                 
-                submarine.battery = 300
+                if current_map_index in [4, 5]:
+                    submarine.battery = 300
+                else:
+                    submarine.battery = 600
                 game_active = True
 
     if game_active:
@@ -200,7 +211,7 @@ while running:
         # Check for battery pickups
         hits = pygame.sprite.spritecollide(submarine, cave_env.batteries, True)
         for hit in hits:
-            submarine.battery += 20
+            submarine.battery += 300
 
         sensor_data = my_sonar.get_observation()
         
