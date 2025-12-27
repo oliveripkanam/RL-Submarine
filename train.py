@@ -14,7 +14,7 @@ from src.ai.agent import DoubleDQNAgent
 # Configuration
 WATCH_MODE = False
 LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
-NUM_EPISODES = 2000
+NUM_EPISODES = 20000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
 EPSILON_START = 0.1
@@ -176,6 +176,12 @@ def train():
         }
         for i in range(len(MAP_FILES))
     }
+    
+    # Curriculum stats tracking
+    curriculum_stats = {
+        i: {'promotions': 0, 'demotions': 0}
+        for i in range(len(MAP_FILES))
+    }
 
     start_episode = 0
 
@@ -208,11 +214,22 @@ def train():
             map1_history = state_data.get('map1_history', [])
             map2_history = state_data.get('map2_history', [])
             map3_history = state_data.get('map3_history', [])
+            # Load curriculum state
+            curriculum_state = state_data.get('curriculum_state', {5: 2500, 6: 2500})
+            # Force reset for map 7 & 8 to avoid issues
+            curriculum_state[5] = 2500
+            curriculum_state[6] = 2500
             print(f"Loaded training state. Histories - M1:{len(map1_history)} M2:{len(map2_history)} M3:{len(map3_history)}")
+            print(f"Curriculum State: {curriculum_state}")
         except Exception as e:
             print(f"Error loading training state: {e}")
+            curriculum_state = {5: 2500, 6: 2500}
     else:
         print("Starting fresh training state.")
+        curriculum_state = {5: 2500, 6: 2500}
+
+    # Map-specific history for curriculum
+    map_specific_history = {i: [] for i in range(len(MAP_FILES))}
 
     for episode in range(start_episode, NUM_EPISODES):
 
@@ -226,9 +243,14 @@ def train():
         recent_map3 = map3_history[-50:]
         map3_sr = sum(recent_map3) / len(recent_map3) if recent_map3 else 0.0
         
-        # WEIGHTINGS
-        # Map 1, 2, 3, 5, 6, 7, 8
-        map_idx = random.choices([0, 1, 2, 3, 4, 5, 6], weights=[5, 5, 10, 10, 10, 30, 30], k=1)[0]
+        # Base weights
+        # Map Indices: 0(M1), 1(M2), 2(M3), 3(M5), 4(M6), 5(M7), 6(M8)
+        weights = [2, 2, 20, 10, 30, 5, 31]
+        
+        # If map 3 is failing, boost it
+            
+        # Normalize weights
+        map_idx = random.choices([0, 1, 2, 3, 4, 5, 6], weights=weights, k=1)[0]
         map_stats[map_idx]['attempts'] += 1
         
         # Load environment & physics from cache
@@ -265,25 +287,33 @@ def train():
         # below's for map 3 so it learns faster
         target_x_min = 50
         
-        if map_idx == 2: # Map 3
-            target_x_min = 100
-
-            # Add variance to prevent overfitting to exact pixels
-            target_x_min += random.randint(-50, 50)
-            target_x_min = max(50, min(target_x_min, 2800))
+        # Apply gated reverse curriculum hard maps (3, 7, 8)
+        if map_idx in [2, 5, 6]: 
+            # Ensure curriculum entry exists
+            if map_idx not in curriculum_state:
+                curriculum_state[map_idx] = 2500 # Default start
+            
+            # Get the curriculum spawn point
+            curr_x = curriculum_state[map_idx]
+            
+            # Add small variance (+/- 50px) to prevent overfitting to exact pixels
+            # But clamp it so it doesn't go out of bounds
+            variance = random.randint(-50, 50)
+            target_x_min = max(50, min(curr_x + variance, 2800))
             
         # safe start logic
         wall_rects = [t.rect for t in cave_env.environment_tiles]
         wall_rects.extend([o.rect for o in cave_env.obstacles])
         found_start = False
         
+        # Search forward
         for x in range(target_x_min, cave_env.environment_width - 50, 20):
              valid_ys = []
              search_y_start = 50
              search_y_end = cave_env.environment_height - 50
              
              for y in range(search_y_start, search_y_end, 10):
-                 # Check with a 60x60 margin (sub is approx 40x40) to ensure air gap
+                 # Check with a 60x60 margin to fit in tight obstacle maps
                  test_rect = pygame.Rect(x - 30, y - 30, 60, 60)
                  if test_rect.collidelist(wall_rects) == -1:
                      valid_ys.append(y)
@@ -294,9 +324,29 @@ def train():
                  found_start = True
                  break
         
+        # Search backward (if forward failed)
         if not found_start:
-            if map_idx == 2:
-                start_x, start_y = target_x_min, 300
+            for x in range(target_x_min, 100, -20):
+                 valid_ys = []
+                 search_y_start = 50
+                 search_y_end = cave_env.environment_height - 50
+                 
+                 for y in range(search_y_start, search_y_end, 10):
+                     test_rect = pygame.Rect(x - 30, y - 30, 60, 60)
+                     if test_rect.collidelist(wall_rects) == -1:
+                         valid_ys.append(y)
+                 
+                 if len(valid_ys) > 0:
+                     start_x = x
+                     start_y = sum(valid_ys) // len(valid_ys)
+                     found_start = True
+                     break
+        
+        if not found_start:
+            # If no safe spot, default to start of map which is always safe.
+            start_x, start_y = 100, 300
+            print(f"WARNING: Could not find safe spawn at x={target_x_min}. Resetting to start.")
+            
         submarine = Submarine(start_x, start_y)
         
         # Custom difficulty, less battery for map 5 & 6
@@ -417,7 +467,8 @@ def train():
             # Check for obstacle collisions (Pufferfish)
             obs_hits = pygame.sprite.spritecollide(submarine, cave_env.obstacles, True)
             for hit in obs_hits:
-                submarine.battery -= 500
+                submarine.battery -= 50
+                reward -= 100
                 hit_obstacle_this_run = True
             
             # Apply homing reward
@@ -447,7 +498,7 @@ def train():
             
             if hit_wall:
                 # Context-aware grading
-                penalty = 2
+                penalty = 5
                 reward -= penalty
                 
                 submarine.battery -= 10
@@ -466,9 +517,15 @@ def train():
                 # Update physics body immediately
             if submarine.rect.right >= cave_env.environment_width - 10:
                 reward += 1000
+                
+                # Survival bonus for maps with no batteries (7 & 8)
+                if len(cave_env.batteries) == 0:
+                    reward += 4000
+                
                 reward += submarine.battery * 0.1 # Bonus for efficiency
                 done = True
                 success_history.append(1)
+                map_specific_history[map_idx].append(1) # Track specific map success
                 if map_idx == 0: map1_history.append(1)
                 if map_idx == 1: map2_history.append(1)
                 if map_idx == 2: map3_history.append(1)
@@ -478,6 +535,7 @@ def train():
                 reward -= 10
                 done = True
                 success_history.append(0)
+                map_specific_history[map_idx].append(0) # Track specific map failure
                 if map_idx == 0: map1_history.append(0)
                 if map_idx == 1: map2_history.append(0)
                 if map_idx == 2: map3_history.append(0)
@@ -489,6 +547,7 @@ def train():
                     reward -= 5.0 # Penalty for laziness
                     done = True
                     success_history.append(0)
+                    map_specific_history[map_idx].append(0) # Track specific map failure
                     if map_idx == 0: map1_history.append(0)
                     if map_idx == 1: map2_history.append(0)
                     if map_idx == 2: map3_history.append(0)
@@ -538,7 +597,7 @@ def train():
                 clock.tick(60)
             else:
                 # In fast mode, pump events to keep window responsive but don't draw
-                if step % 1000 == 0:
+                if step % 100 == 0:
                     screen.fill((0, 0, 0))
                     msg = font.render(f"FAST MODE (Ep {episode}). Press TAB to Watch.", True, (0, 255, 0))
                     screen.blit(msg, (1200//2 - 150, 800//2))
@@ -546,6 +605,42 @@ def train():
 
             if done:
                 break
+        
+        # Cleanup physics body for next episode
+        map_stats[map_idx]['total_reward'] += total_reward
+        
+        # Check if we need to adjust difficulty for Maps 2, 5, 6
+        if map_idx in [2, 5, 6]:
+            # Get recent history for this specific map
+            history = map_specific_history[map_idx]
+            if len(history) >= 100:
+                recent = history[-100:]
+                sr = sum(recent) / len(recent)
+                
+                current_x = curriculum_state.get(map_idx, 2500)
+                
+                if sr > 0.80:
+                    # Too easy? Move left (Harder)
+                    # Don't go below 100 (Start of map)
+                    new_x = max(100, current_x - 50)
+                    if new_x != current_x:
+                        curriculum_state[map_idx] = new_x
+                        # Clear history to prove mastery at new level
+                        map_specific_history[map_idx] = [] 
+                        curriculum_stats[map_idx]['promotions'] += 1
+                        
+                elif sr < 0.25:
+                    # Too hard? Move right (Easier)
+                    # Don't go beyond 2500
+                    new_x = min(2500, current_x + 50)
+                    if new_x != current_x:
+                        curriculum_state[map_idx] = new_x
+                        # Clear history to reset stats for easier level
+                        map_specific_history[map_idx] = []
+                        curriculum_stats[map_idx]['demotions'] += 1
+
+        # Update battery stats
+        is_success = success_history[-1] == 1
         
         # Cleanup physics body for next episode
         map_stats[map_idx]['total_reward'] += total_reward
@@ -579,9 +674,6 @@ def train():
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
         
         # Calculate success rate
-        recent_success = success_history[-50:]
-        success_rate = sum(recent_success) / len(recent_success) if recent_success else 0.0
-
         if episode % SAVE_INTERVAL == 0:
             agent.save(f"models/ddqn_submarine_ep{episode}.pth")
             
@@ -589,7 +681,8 @@ def train():
             state_data = {
                 'map1_history': map1_history,
                 'map2_history': map2_history,
-                'map3_history': map3_history
+                'map3_history': map3_history,
+                'curriculum_state': curriculum_state
             }
             np.save("training_state.npy", state_data)
 
@@ -599,8 +692,12 @@ def train():
     state_data = {
         'map1_history': map1_history,
         'map2_history': map2_history,
-        'map3_history': map3_history
+        'map3_history': map3_history,
+        'curriculum_state': curriculum_state
     }
+    np.save("training_state.npy", state_data)
+    
+    print("\n" + "="*50)
     np.save("training_state.npy", state_data)
     
     print("\n" + "="*50)
@@ -651,6 +748,19 @@ def train():
             os_stats = obstacle_stats[i]
             display_name = filename.split('/')[-1]
             print(f"{display_name:<25} | {os_stats['avoided_won']:<11} | {os_stats['avoided_died']:<11} | {os_stats['hit_died']:<11} | {os_stats['hit_won']:<11}")
+    print("="*50)
+    
+    print("\n" + "="*50)
+    print("PROMOTION/DEMOTION STATS")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Promotions':<11} | {'Demotions':<11}")
+    print("-" * 55)
+    
+    for i, filename in enumerate(MAP_FILES):
+        if i in [2, 5, 6] and i in curriculum_stats and map_stats[i]['attempts'] > 0:
+            cs = curriculum_stats[i]
+            display_name = filename.split('/')[-1]
+            print(f"{display_name:<25} | {cs['promotions']:<11} | {cs['demotions']:<11}")
     print("="*50)
     
     # Save loss data
