@@ -61,6 +61,12 @@ class CaveEnvironment:
                     self.batteries.add(Battery(x * self.tile_size, y * self.tile_size))
                 elif tile == '21': # Obstacle
                     self.obstacles.add(Obstacle(x * self.tile_size, y * self.tile_size))
+                
+                # Ignore wind tiles
+                elif tile == '30' or tile == '31':
+                    pass
+                
+                # Create wall tile
                 elif tile != '-1':
                     environment_tiles.append(
                         Tile(
