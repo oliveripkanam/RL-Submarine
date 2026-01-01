@@ -14,7 +14,7 @@ from src.ai.agent import DoubleDQNAgent
 # Configuration
 WATCH_MODE = False
 LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
-NUM_EPISODES = 5000
+NUM_EPISODES = 2000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
 EPSILON_START = 0.1
@@ -22,6 +22,10 @@ EPSILON_END = 0.01
 EPSILON_DECAY = 0.999
 TARGET_UPDATE = 1000
 SAVE_INTERVAL = 50
+
+# PER Hyperparameters
+BETA_START = 0.4
+BETA_FRAMES = 100000
 
 # Map configuration
 MAP_FILES = [
@@ -565,7 +569,9 @@ def train():
                     stagnation_start_x = submarine.true_x
 
             if step % 4 == 0:
-                loss = agent.train_step(BATCH_SIZE)
+                # Anneal beta
+                beta = min(1.0, BETA_START + total_steps * (1.0 - BETA_START) / BETA_FRAMES)
+                loss = agent.train_step(BATCH_SIZE, beta)
                 if loss is not None:
                     loss_history.append(loss)
             
