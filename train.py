@@ -1,7 +1,9 @@
 import pygame
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import pymunk
 import numpy as np
-import os
 import glob
 import random
 import math
@@ -13,7 +15,7 @@ from src.ai.agent import DoubleDQNAgent
 
 # Configuration
 WATCH_MODE = False
-LOAD_MODEL = False     # IMPORTANT: Set to "True" to continue training from previous save
+LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
 NUM_EPISODES = 10000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
