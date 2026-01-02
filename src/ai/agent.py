@@ -22,7 +22,7 @@ class ReplayBuffer:
         return len(self.buffer)
 
 class DoubleDQNAgent:
-    def __init__(self, input_shape=19, num_actions=4, lr=1e-5, gamma=0.99, buffer_size=100000):
+    def __init__(self, input_shape=19, num_actions=4, lr=1e-5, gamma=0.99, buffer_size=500000):
         self.num_actions = num_actions
         self.gamma = gamma
         self.device = torch.device("cpu")

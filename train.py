@@ -4,6 +4,7 @@ import numpy as np
 import os
 import glob
 import random
+import math
 from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
 from src.entities.submarine import Submarine
@@ -13,12 +14,12 @@ from src.ai.agent import DoubleDQNAgent, VanillaDQNAgent
 # Configuration
 WATCH_MODE = False
 LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
-NUM_EPISODES = 2000
+NUM_EPISODES = 5000
 MAX_STEPS = 4000
-BATCH_SIZE = 64
-EPSILON_START = 0.2
+BATCH_SIZE = 128
+EPSILON_START = 0.1
 EPSILON_END = 0.01
-EPSILON_DECAY = 0.995
+EPSILON_DECAY = 0.999
 TARGET_UPDATE = 1000
 SAVE_INTERVAL = 50
 
@@ -27,7 +28,10 @@ MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
     "src/cave_environment/map2_jagged.csv",
     "src/cave_environment/map3_jagged_long_narrow.csv",
-    "src/cave_environment/map4_zigzag.csv"
+    "src/cave_environment/map5_one_battery.csv",
+    "src/cave_environment/map6_three_battery.csv",
+    "src/cave_environment/map7_obstacle_simple.csv",
+    "src/cave_environment/map8_obstacle_hard.csv",
 ]
 
 # Initialize pygame
@@ -65,15 +69,57 @@ def load_level(map_index, spritesheet):
         print(f"Error loading map {map_index}: {e}")
         return None, None
 
-def get_full_state(sonar_data, submarine):
+def get_full_state(sonar_data, submarine, map_idx, env_width, batteries):
     normalized_battery = submarine.battery / 500.0
-    norm_vx = (submarine.vel_x + 7.0) / 14.0
-    norm_vy = (submarine.vel_y + 7.0) / 14.0
+    norm_vx = (submarine.vel_x + 10.0) / 20.0
+    norm_vy = (submarine.vel_y + 10.0) / 20.0
+    
+    # Split-brain architecture (One-hot encoding)
+    # We  tell the agent what type of map it is in using distinct neurons
+    # Slot 0: Is_Straight (maps 0, 1)
+    # Slot 1: Is_Narrow (map 2)
+    # Slot 2: Is_Battery (maps 3, 4)
+    # Slot 3: Is_Obstacle (maps 5, 6)
+    is_straight = 1.0 if map_idx in [0, 1] else 0.0
+    is_narrow = 1.0 if map_idx == 2 else 0.0
+    is_battery = 1.0 if map_idx in [3, 4] else 0.0
+    is_obstacle = 1.0 if map_idx in [5, 6] else 0.0
+    
+    map_encoding = [0.0] * 20
+    map_encoding[0] = is_straight
+    map_encoding[1] = is_narrow
+    map_encoding[2] = is_battery
+    map_encoding[3] = is_obstacle
+    
+    # Inject normalized X-position into the last slot of map_encoding
+    map_encoding[-1] = submarine.true_x / env_width
+
+    # Battery sensor
+    closest_dist = float('inf')
+    bat_dx = 0.0
+    bat_dy = 0.0
+    
+    if batteries and len(batteries) > 0:
+        sub_x, sub_y = submarine.rect.centerx, submarine.rect.centery
+        for bat in batteries:
+            dx = bat.rect.centerx - sub_x
+            dy = bat.rect.centery - sub_y
+            dist = dx*dx + dy*dy
+            if dist < closest_dist:
+                closest_dist = dist
+                bat_dx = dx
+                bat_dy = dy
+        
+        # Normalize (assuming max view distance approx 1000px)
+        # We clamp it to -1.0 to 1.0 range
+        map_encoding[17] = max(-1.0, min(1.0, bat_dx / 1000.0))
+        map_encoding[18] = max(-1.0, min(1.0, bat_dy / 1000.0))
     
     return np.concatenate([
         sonar_data,
         [normalized_battery],
-        [norm_vx, norm_vy]
+        [norm_vx, norm_vy],
+        map_encoding
     ])
 
 def train():
@@ -90,11 +136,19 @@ def train():
         if files:
             print("Cleared previous models.")
 
+    # Pre-load all maps
     spritesheet = SpriteSheet("src/cave_environment/tileset.png")
+    print("Pre-loading maps...")
+    preloaded_maps = []
+    for i in range(len(MAP_FILES)):
+        s, e = load_level(i, spritesheet)
+        preloaded_maps.append((s, e))
+    print("Maps loaded.")
     
     # Initialize agent
     # Actions: up, down, left, right, glide (do nothing)
-    agent = DoubleDQNAgent(input_shape=19, num_actions=5)
+    # Input shape: 16 sonar + 1 battery + 2 velocity + 20 map_id (for future support)= 39
+    agent = DoubleDQNAgent(input_shape=39, num_actions=5)
     epsilon = EPSILON_START
     episode_loss = np.full(NUM_EPISODES, None, dtype=np.float32)
     
@@ -116,120 +170,132 @@ def train():
     # Success tracking
     success_history = []
     loss_history = []
-    map3_history = []
-    map4_history = []
     map_stats = {
         i: {'goals': 0, 'attempts': 0, 'total_reward': 0} 
         for i in range(len(MAP_FILES))
     }
     
-    start_episode = 0
+    # Battery stats tracking
+    battery_stats = {
+        i: {
+            'picked_up': 0,      # Total runs where at least 1 battery was grabbed
+            'picked_success': 0, # Grabbed battery AND reached goal
+            'picked_fail': 0,    # Grabbed battery BUT died
+            'ignored_fail': 0,   # Ignored battery AND died
+            'ignored_success': 0 # Ignored battery AND reached goal
+        }
+        for i in range(len(MAP_FILES))
+    }
     
-    # Load training state if exists and we are loading model
-    if LOAD_MODEL and os.path.exists("training_state.npy"):
-        try:
-            state_data = np.load("training_state.npy", allow_pickle=True).item()
-            map3_history = state_data.get('map3_history', [])
-            map4_history = state_data.get('map4_history', [])
-            # We don't load epsilon to allow for restart if needed, 
-            # but we will start lower than 1.0 if model is loaded.
-            print(f"Loaded training state. Map 3 History: {len(map3_history)}, Map 4 History: {len(map4_history)}")
-        except Exception as e:
-            print(f"Error loading training state: {e}")
+    # Obstacle stats tracking
+    obstacle_stats = {
+        i: {
+            'avoided_won': 0,
+            'avoided_died': 0,
+            'hit_died': 0,
+            'hit_won': 0
+        }
+        for i in range(len(MAP_FILES))
+    }
 
+    # Clean run stats tracking
+    clean_stats = {
+        i: {
+            'clean_win': 0,
+            'dirty_win': 0,
+            'clean_fail': 0,
+            'dirty_fail': 0
+        }
+        for i in range(len(MAP_FILES))
+    }
+
+    start_episode = 0
+
+    if LOAD_MODEL:
+        model_path = "models/ddqn_submarine_final.pth"
+        if not os.path.exists(model_path):
+            # Try to find the latest checkpoint
+            list_of_files = glob.glob('models/ddqn_submarine_ep*.pth')
+            if list_of_files:
+                model_path = max(list_of_files, key=os.path.getctime)
+                # Try to extract episode number
+                try:
+                    start_episode = int(model_path.split("ep")[-1].split(".")[0])
+                    print(f"Found checkpoint: {model_path} (Episode {start_episode})")
+                except:
+                    pass
+        
+        try:
+            agent.load(model_path)
+            print(f"Successfully loaded model: {model_path}")
+            epsilon = EPSILON_START
+        except Exception as e:
+            print(f"Could not load model ({e}). Starting fresh!")
+            epsilon = 1.0 # Reset exploration for new brain
+    
     for episode in range(start_episode, NUM_EPISODES):
 
-        # Calculate sr
-        recent_map3 = map3_history[-50:]
-        map3_sr = sum(recent_map3) / len(recent_map3) if recent_map3 else 0.0
-        
-        recent_map4 = map4_history[-50:]
-        map4_sr = sum(recent_map4) / len(recent_map4) if recent_map4 else 0.0
-
-        # Base weights for map 1 & 2
-        w1, w2 = 5.0, 5.0
-        
-        # Prioritize maps with lower success rates
-        score3 = (1.1 - map3_sr) ** 2
-        score4 = (1.1 - map4_sr) ** 2
-        
-        total_score = score3 + score4
-        remaining_weight = 90.0
-        
-        w3 = (score3 / total_score) * remaining_weight
-        w4 = (score4 / total_score) * remaining_weight
-        
-        weights = [w1, w2, w3, w4]
-        
-        # Select map based on dynamic weights
-        map_idx = random.choices([0, 1, 2, 3], weights=weights, k=1)[0]
-        
+        # Weighted training
+        rand_val = random.random()
+        if rand_val < 0.5:
+            map_idx = 6            
+        elif rand_val < 0.8:
+            map_idx = 2             
+        elif rand_val < 0.9:
+            map_idx = 4             
+        else:
+            map_idx = random.choice([0, 1, 3, 5])
+            
         map_stats[map_idx]['attempts'] += 1
         
-        # Load environment & physics
-        space, cave_env = load_level(map_idx, spritesheet)
+        # Load environment & physics from cache
+        space, cave_env = preloaded_maps[map_idx]
+        
+        # Clear and re-parse dynamic entities
+        cave_env.batteries.empty()
+        cave_env.obstacles.empty()
+        
+        # Parse map data again for dynamic entities
+        with open(MAP_FILES[map_idx], 'r') as f:
+            data = f.readlines()
+            for y, line in enumerate(data):
+                row = line.strip().split(',')
+                for x, tile in enumerate(row):
+                    if tile == '20': # Battery
+                        from src.entities.items import Battery
+                        cave_env.batteries.add(Battery(x * 16, y * 16))
+                    elif tile == '21': # Obstacle
+                        from src.entities.items import Obstacle
+                        cave_env.obstacles.add(Obstacle(x * 16, y * 16))
+
+        # Clean up previous dynamic bodies
+        for body in space.bodies:
+            if body.body_type == pymunk.Body.KINEMATIC or body.body_type == pymunk.Body.DYNAMIC:
+                space.remove(body)
+                for shape in body.shapes:
+                    space.remove(shape)
+        
         if not space:
             continue
 
-        # Reset submarine
+        # Reset sub
         start_x, start_y = 100, 300
         
-        # below's for map 3 so it learns faster
+        # Always start from the left (Deep End strategy)
         target_x_min = 50
         
-        if map_idx == 2: # Map 3
-            # Reverse curriculum: start near the end (2500), as mastery improves, push spawn back.
-            if map3_sr > 0.8:
-                target_x_min = 100
-            elif map3_sr > 0.6:
-                target_x_min = 1000
-            elif map3_sr > 0.4:
-                target_x_min = 1500
-            elif map3_sr > 0.2:
-                target_x_min = 2000
-            else:
-                target_x_min = 2500
-
-            # Add variance to prevent overfitting to exact pixels
-            target_x_min += random.randint(-50, 50)
-            target_x_min = max(50, min(target_x_min, 2800))
-            
-        elif map_idx == 3: # Map 4
-            # below's for map 4 so it learns faster
-            if map4_sr > 0.8:
-                target_x_min = 50      # Do the whole thing
-            elif map4_sr > 0.7:
-                target_x_min = 500
-            elif map4_sr > 0.6:
-                target_x_min = 900
-            elif map4_sr > 0.5:
-                target_x_min = 1200    # Do half
-            elif map4_sr > 0.4:
-                target_x_min = 1500
-            elif map4_sr > 0.3:
-                target_x_min = 1700
-            elif map4_sr > 0.2:
-                target_x_min = 1900
-            else:
-                target_x_min = 2100    # Just the end bit
-
-            # Add variance
-            target_x_min += random.randint(-50, 50)
-            target_x_min = max(50, min(target_x_min, 2300))
-
         # safe start logic
-        wall_rects = [t.rect for t in cave_env.environment_tiles]
-        wall_rects.extend([o.rect for o in cave_env.obstacles])
         found_start = False
+        wall_rects = [t.rect for t in cave_env.environment_tiles]
         
+        # Search forward
         for x in range(target_x_min, cave_env.environment_width - 50, 20):
              valid_ys = []
-             # to prevent spawning in the ceiling/floor void for map 4 
-             search_y_start = 200 if map_idx == 3 else 50
-             search_y_end = 600 if map_idx == 3 else cave_env.environment_height - 50
+             search_y_start = 50
+             search_y_end = cave_env.environment_height - 50
              
              for y in range(search_y_start, search_y_end, 10):
-                 # Check with a 60x60 margin (sub is approx 40x40) to ensure air gap
+                 # Check with a 60x60 margin to fit in tight obstacle maps
                  test_rect = pygame.Rect(x - 30, y - 30, 60, 60)
                  if test_rect.collidelist(wall_rects) == -1:
                      valid_ys.append(y)
@@ -240,30 +306,58 @@ def train():
                  found_start = True
                  break
         
+        # Search backward (if forward failed)
         if not found_start:
-            if map_idx == 3:
-                start_x, start_y = 50, 400
-            else:
-                start_x, start_y = 100, 300
-
+            for x in range(target_x_min, 100, -20):
+                 valid_ys = []
+                 search_y_start = 50
+                 search_y_end = cave_env.environment_height - 50
+                 
+                 for y in range(search_y_start, search_y_end, 10):
+                     test_rect = pygame.Rect(x - 30, y - 30, 60, 60)
+                     if test_rect.collidelist(wall_rects) == -1:
+                         valid_ys.append(y)
+                 
+                 if len(valid_ys) > 0:
+                     start_x = x
+                     start_y = sum(valid_ys) // len(valid_ys)
+                     found_start = True
+                     break
+        
+        if not found_start:
+            # If no safe spot, default to start of map which is always safe.
+            start_x, start_y = 100, 300
+            print(f"WARNING: Could not find safe spawn at x={target_x_min}. Resetting to start.")
+            
         submarine = Submarine(start_x, start_y)
-        submarine.battery = 500
+        
+        # Custom difficulty, less battery for map 5 & 6
+        if map_idx in [3, 4]:
+            submarine.battery = 300
+        else:
+            submarine.battery = 600
+            
+        current_run_picked_battery = False
+        hit_obstacle_this_run = False
+        hit_wall_this_run = False
         
         sonar_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
         sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
-        space.add(sonar_body)
         sonar = Sonar(space, sonar_body)
         
-        current_observation = sonar.get_observation()
-        state = get_full_state(current_observation, submarine)
-        
+        state = get_full_state(sonar.get_observation(), submarine, map_idx, cave_env.environment_width, cave_env.batteries)
         total_reward = 0
         done = False
-        display_hit_msg = False
-        total_loss = 0.0
+        
+        # Stagnation check variables
+        stagnation_start_x = submarine.true_x
+        stagnation_timer = 0
+        
+        action = 4
+
         for step in range(MAX_STEPS):
-            # Event handling (Throttled in fast mode)
-            if WATCH_MODE or step % 100 == 0:
+            # Event handling
+            if WATCH_MODE:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         pygame.quit()
@@ -275,43 +369,154 @@ def train():
                         if event.key == pygame.K_TAB:
                             WATCH_MODE = not WATCH_MODE
                             print(f"Watch Mode: {WATCH_MODE}")
+            if step % 10 == 0: # Check every 10 steps in Fast Mode
+                 for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        return
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            pygame.quit()
+                            return
+                        if event.key == pygame.K_TAB:
+                            WATCH_MODE = not WATCH_MODE
+                            print(f"Watch Mode: {WATCH_MODE}")
 
-            action = agent.select_action(state, epsilon)
+            # Dynamic epsilon
+            current_epsilon = epsilon
+
+            if step % 4 == 0:
+                action = agent.select_action(state, current_epsilon)
             
             # Save previous position
             prev_x = submarine.true_x
             prev_y = submarine.true_y
             
+            # Battery homing reward before moving
+            prev_bat_dist = float('inf')
+            if map_idx in [3, 4] and len(cave_env.batteries) > 0:
+                for bat in cave_env.batteries:
+                    d = math.hypot(bat.rect.centerx - submarine.rect.centerx, bat.rect.centery - submarine.rect.centery)
+                    if d < prev_bat_dist: prev_bat_dist = d
+            
             reward = -0.1 # Base penalty
 
             if action == 0: # Up
                 submarine.move_up()
-                reward += 0.5
             elif action == 1: # Down
                 submarine.move_down()
-                reward += 0.5
             elif action == 2: # Left
                 submarine.move_left()
-                reward -= 0.05
             elif action == 3: # Right
                 submarine.move_right()
-                reward += 0.5
             elif action == 4: # Glide
                 # do nothing
-                reward += 0.01
+                reward += 0.05 # Efficiency bonus
+                pass
             
             submarine.update()
             sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
             
+            # Battery homing reward after moving
+            curr_bat_dist = float('inf')
+            if map_idx in [3, 4] and len(cave_env.batteries) > 0:
+                for bat in cave_env.batteries:
+                    d = math.hypot(bat.rect.centerx - submarine.rect.centerx, bat.rect.centery - submarine.rect.centery)
+                    if d < curr_bat_dist: curr_bat_dist = d
+            
+            # Apply homing reward
+            battery_picked_up_this_frame = False
+            
+            # Distance-based reward
+            dist_x = submarine.true_x - prev_x
+            
+            # Base distance reward
+            dist_reward = dist_x * 5.0
+            
+            # Initialize variables
+            speed_penalty = 0.0
+            safety_reward = 0.0
+            loitering_penalty = 0.0
+            
+            # Get sonar for safety calculations
+            current_observation = sonar.get_observation()
+            min_wall_dist = min(current_observation)
+
+            # Survival maps
+            if map_idx in [2, 5, 6]:
+                
+                # Speed penalty
+                speed_penalty = 0.05 * (submarine.vel_x ** 2)
+                
+                # Safety cushion
+                if submarine.vel_x > 1.0:
+                    safety_reward = min_wall_dist * 15.0
+                
+                # Loitering penalty
+                if submarine.vel_x < 0.5:
+                    loitering_penalty = -1.0
+
+            # Hunting maps
+            elif map_idx == 4 or map_idx == 3:
+                # No speed penalty
+                speed_penalty = 0.0
+                
+                # Always-on safety cushion (No velocity gate)
+                # We want it to be safe even if it slows down to aim
+                safety_reward = min_wall_dist * 5.0
+                
+                # Hunting bonus 
+                # Reward vertical movement to encourage looking for batteries
+                if abs(submarine.vel_y) > 0.5:
+                    reward += 0.5
+
+                # Urgency bonus
+                # If battery is high (> 400), encourage moving RIGHT to finish
+                if submarine.battery > 400:
+                    reward += dist_x * 2.0
+            
+            # Final sum
+            reward += dist_reward - speed_penalty + safety_reward + loitering_penalty
+            
+            # Cowardice penalty
+            if dist_x < -0.5:
+                reward -= 0.5
+
+            # Time penalty
+            reward -= 0.01
             # Check for battery pickups
             hits = pygame.sprite.spritecollide(submarine, cave_env.batteries, True)
             for hit in hits:
-                submarine.battery += 20
-                reward += 5 # Encourage collecting batteries
-            
-            next_observation = sonar.get_observation()
-            next_state = get_full_state(next_observation, submarine)
+                submarine.battery += 300
+                reward += 1000.0 # Massive reward to make it irresistible
+                current_run_picked_battery = True
+                battery_picked_up_this_frame = True
 
+            # Check for obstacle collisions (Pufferfish)
+            obs_hits = pygame.sprite.spritecollide(submarine, cave_env.obstacles, True)
+            for hit in obs_hits:
+                submarine.battery -= 50
+                reward -= 150
+                hit_obstacle_this_run = True
+            
+            # Apply homing reward
+            if map_idx in [3, 4] and not battery_picked_up_this_frame:
+                if prev_bat_dist != float('inf') and curr_bat_dist != float('inf'):
+                    diff = prev_bat_dist - curr_bat_dist
+                    # If diff is positive = we got closer, reward it
+                    # If diff is negative = we moved away, penalize it
+                    reward += diff * 4.0 
+            
+            # We already called sonar.get_observation() earlier for the safety reward
+            # Reuse it here to avoid double computation
+            next_observation = current_observation 
+            next_state = get_full_state(next_observation, submarine, map_idx, cave_env.environment_width, cave_env.batteries)
+
+            # Store experience in replay buffer
+            agent.memory.push(state, action, reward, next_state, done)
+            
+            # Accumulate reward
+            total_reward += reward
 
             display_hit_msg = False
             
@@ -322,7 +527,12 @@ def train():
                     break
             
             if hit_wall:
-                reward -= 2
+                hit_wall_this_run = True
+                # Hitting a wall at high speed is bad
+                current_speed = math.sqrt(submarine.vel_x**2 + submarine.vel_y**2)
+                penalty = 20.0 + (current_speed * 5.0)
+                reward -= penalty
+                
                 submarine.battery -= 10
                 display_hit_msg = True
                 
@@ -337,33 +547,38 @@ def train():
                 submarine.vel_y *= -0.5
                 
                 # Update physics body immediately
-                sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
-            
             if submarine.rect.right >= cave_env.environment_width - 10:
-                reward += 100
+                # Massive reward to justify the slow driving on hard maps
+                reward += 10000
+                
+                # Survival bonus for maps with no batteries
+                if len(cave_env.batteries) == 0:
+                    reward += 4000
+                
                 reward += submarine.battery * 0.1 # Bonus for efficiency
                 done = True
                 success_history.append(1)
-                if map_idx == 2: map3_history.append(1)
-                if map_idx == 3: map4_history.append(1)
                 map_stats[map_idx]['goals'] += 1
 
             if submarine.battery <= 0:
                 reward -= 10
                 done = True
                 success_history.append(0)
-                if map_idx == 2: map3_history.append(0)
-                if map_idx == 3: map4_history.append(0)
-            
-            total_reward += reward
+            # Stagnation check
+            stagnation_timer += 1
+            if stagnation_timer >= 300:
+                if abs(submarine.true_x - stagnation_start_x) < 100:
+                    reward -= 5.0 # Penalty for laziness
+                    done = True
+                    success_history.append(0)
+                    # Reset timer and position if moved enough
+                    stagnation_timer = 0
+                    stagnation_start_x = submarine.true_x
 
-            agent.memory.push(state, action, reward, next_state, done)
-            
-            loss = agent.train_step(BATCH_SIZE)
-            total_loss += loss if loss is not None else 0.0
-
-            if loss is not None:
-                loss_history.append(loss)
+            if step % 4 == 0:
+                loss = agent.train_step(BATCH_SIZE)
+                if loss is not None:
+                    loss_history.append(loss)
             
             total_steps += 1
             if total_steps % TARGET_UPDATE == 0:
@@ -402,7 +617,7 @@ def train():
                 clock.tick(60)
             else:
                 # In fast mode, pump events to keep window responsive but don't draw
-                if step % 1000 == 0:
+                if step % 100 == 0:
                     screen.fill((0, 0, 0))
                     msg = font.render(f"FAST MODE (Ep {episode}). Press TAB to Watch.", True, (0, 255, 0))
                     screen.blit(msg, (1200//2 - 150, 800//2))
@@ -410,10 +625,47 @@ def train():
 
             if done:
                 break
-        
-        # Cleanup physics body for next episode
         map_stats[map_idx]['total_reward'] += total_reward
         
+        # Update battery stats
+        is_success = success_history[-1] == 1
+        if current_run_picked_battery:
+            battery_stats[map_idx]['picked_up'] += 1
+            if is_success:
+                battery_stats[map_idx]['picked_success'] += 1
+            else:
+                battery_stats[map_idx]['picked_fail'] += 1
+        else:
+            if is_success:
+                battery_stats[map_idx]['ignored_success'] += 1
+            else:
+                battery_stats[map_idx]['ignored_fail'] += 1
+        
+        # Update obstacle stats
+        if hit_obstacle_this_run:
+            if is_success:
+                obstacle_stats[map_idx]['hit_won'] += 1
+            else:
+                obstacle_stats[map_idx]['hit_died'] += 1
+        else:
+            if is_success:
+                obstacle_stats[map_idx]['avoided_won'] += 1
+            else:
+                obstacle_stats[map_idx]['avoided_died'] += 1
+
+        # Update clean run stats
+        is_clean = not hit_wall_this_run and not hit_obstacle_this_run
+        if is_clean:
+            if is_success:
+                clean_stats[map_idx]['clean_win'] += 1
+            else:
+                clean_stats[map_idx]['clean_fail'] += 1
+        else:
+            if is_success:
+                clean_stats[map_idx]['dirty_win'] += 1
+            else:
+                clean_stats[map_idx]['dirty_fail'] += 1
+
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
         average_loss = total_loss / (step + 1)
         episode_loss[episode] = average_loss
@@ -425,45 +677,11 @@ def train():
         
         
         # Calculate success rate
-        recent_success = success_history[-50:]
-        success_rate = sum(recent_success) / len(recent_success) if recent_success else 0.0
-
-        if episode % 50 == 0:
-            m_stats = map_stats[map_idx]
-            
-            # Calculate rolling SR for the current map
-            if map_idx == 2:
-                recent = map3_history[-50:]
-                map_sr_rolling = sum(recent) / len(recent) if recent else 0.0
-            elif map_idx == 3:
-                recent = map4_history[-50:]
-                map_sr_rolling = sum(recent) / len(recent) if recent else 0.0
-            else:
-                # For maps 1/2 we don't track detailed history, fall back to lifetime
-                map_sr_rolling = m_stats['goals'] / m_stats['attempts'] if m_stats['attempts'] > 0 else 0.0
-
-            print(f"Ep {episode} (Map {map_idx + 1}) | Reward: {total_reward:.2f} | Eps: {epsilon:.2f} | SR (Rolling): {map_sr_rolling:.0%} | SR (Global 50): {success_rate:.0%}")
-
-
         if episode % SAVE_INTERVAL == 0:
             agent.save(f"models/ddqn_submarine_ep{episode}.pth")
-            
-            # Save training state
-            state_data = {
-                'map3_history': map3_history,
-                'map4_history': map4_history
-            }
-            np.save("training_state.npy", state_data)
 
     np.save("models/vanilla_dqn_training_loss.npy", episode_loss)
     agent.save("models/vanilla_dqn_submarine_final.pth")
-    
-    # Save final training state
-    state_data = {
-        'map3_history': map3_history,
-        'map4_history': map4_history
-    }
-    np.save("training_state.npy", state_data)
     
     print("\n" + "="*50)
     print("TRAINING COMPLETE - FINAL STATISTICS")
@@ -472,38 +690,73 @@ def train():
     print("-" * 85)
     
     for i, filename in enumerate(MAP_FILES):
-        # Only show stats for maps that were actually used (if list was shortened)
-        if i in map_stats and map_stats[i]['attempts'] > 0:
-            stats = map_stats[i]
-            goals = stats['goals']
-            attempts = stats['attempts']
-            avg_reward = stats['total_reward'] / attempts
-            success_rate = (goals / attempts) * 100
-            
-            # Shorten filename for display
+        stats = map_stats[i]
+        attempts = stats['attempts']
+        goals = stats['goals']
+        avg_reward = stats['total_reward'] / attempts if attempts > 0 else 0
+        success_rate = (goals / attempts * 100) if attempts > 0 else 0
+        
+        display_name = filename.split('/')[-1]
+        print(f"{display_name:<40} | {goals:<5} | {attempts:<8} | {success_rate:<11.1f}% | {avg_reward:<10.1f}")
+    print("="*50)
+
+    print("\n" + "="*50)
+    print("BATTERY STATS")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Picked(Up)':<11} | {'Picked(Win)':<11} | {'Picked(Die)':<11} | {'Ignored(Die)':<12} | {'Ignored(Win)':<12}")
+    print("-" * 90)
+
+    for i, filename in enumerate(MAP_FILES):
+        # Show battery stats for map 5 and 6
+        if i in [3, 4] and i in battery_stats and map_stats[i]['attempts'] > 0:
+            bs = battery_stats[i]
             display_name = filename.split('/')[-1]
-            
-            print(f"{display_name:<40} | {goals:<5} | {attempts:<8} | {success_rate:>6.1f}%      | {avg_reward:>8.1f}")
-            
+            print(f"{display_name:<25} | {bs['picked_up']:<11} | {bs['picked_success']:<11} | {bs['picked_fail']:<11} | {bs['ignored_fail']:<12} | {bs['ignored_success']:<12}")
+    print("="*50)
+
+    print("\n" + "="*50)
+    print("OBSTACLE STATS")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Avoid(Win)':<11} | {'Avoid(Die)':<11} | {'Hit(Die)':<11} | {'Hit(Win)':<11}")
+    print("-" * 90)
+
+    for i, filename in enumerate(MAP_FILES):
+        # Show obstacle stats for map 7 and 8
+        if i in [5, 6] and i in obstacle_stats and map_stats[i]['attempts'] > 0:
+            os_stats = obstacle_stats[i]
+            display_name = filename.split('/')[-1]
+            print(f"{display_name:<25} | {os_stats['avoided_won']:<11} | {os_stats['avoided_died']:<11} | {os_stats['hit_died']:<11} | {os_stats['hit_won']:<11}")
+    print("="*50)
+
+    print("\n" + "="*50)
+    print("CLEAN RUN STATS (No Wall/Obstacle Hits)")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Clean Win':<11} | {'Dirty Win':<11} | {'Clean Fail':<11} | {'Dirty Fail':<11}")
+    print("-" * 90)
+
+    for i, filename in enumerate(MAP_FILES):
+        if map_stats[i]['attempts'] > 0:
+            cs = clean_stats[i]
+            display_name = filename.split('/')[-1]
+            print(f"{display_name:<25} | {cs['clean_win']:<11} | {cs['dirty_win']:<11} | {cs['clean_fail']:<11} | {cs['dirty_fail']:<11}")
     print("="*50)
     
     # Save loss data
-    if loss_history:
-        np.save("training_loss.npy", np.array(loss_history))
-        print("Network Training Loss saved to 'training_loss.npy'")
-        
-        avg_first_100 = sum(loss_history[:100]) / len(loss_history[:100]) if len(loss_history) >= 100 else 0
-        avg_last_100 = sum(loss_history[-100:]) / len(loss_history[-100:]) if len(loss_history) >= 100 else 0
-        peak_loss = max(loss_history)
-        
-        print("\n" + "="*50)
-        print("NETWORK HEALTH & LOSS")
-        print("="*50)
-        print(f"Avg Loss (First 100 Eps):  {avg_first_100:.3f}")
-        print(f"Avg Loss (Last 100 Eps):   {avg_last_100:.3f}")
-        print(f"Peak Loss:                 {peak_loss:.3f}")
-        print(f"Total Training Steps:      {total_steps}")
-        print("="*50)
+    np.save("training_loss.npy", np.array(loss_history))
+    print("Network Training Loss saved to 'training_loss.npy'")
+    
+    avg_first_100 = sum(loss_history[:100]) / len(loss_history[:100]) if len(loss_history) >= 100 else 0
+    avg_last_100 = sum(loss_history[-100:]) / len(loss_history[-100:]) if len(loss_history) >= 100 else 0
+    peak_loss = max(loss_history) if loss_history else 0
+    
+    print("\n" + "="*50)
+    print("NETWORK HEALTH & LOSS")
+    print("="*50)
+    print(f"Avg Loss (First 100 Eps):  {avg_first_100:.3f}")
+    print(f"Avg Loss (Last 100 Eps):   {avg_last_100:.3f}")
+    print(f"Peak Loss:                 {peak_loss:.3f}")
+    print(f"Total Training Steps:      {total_steps}")
+    print("="*50)
 
     pygame.quit()
 
