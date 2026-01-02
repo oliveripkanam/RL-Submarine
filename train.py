@@ -13,7 +13,7 @@ from src.ai.agent import DoubleDQNAgent, VanillaDQNAgent
 
 # Configuration
 WATCH_MODE = False
-LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
+LOAD_MODEL = False     # IMPORTANT: Set to "True" to continue training from previous save
 NUM_EPISODES = 5000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
@@ -148,19 +148,9 @@ def train():
     # Initialize agent
     # Actions: up, down, left, right, glide (do nothing)
     # Input shape: 16 sonar + 1 battery + 2 velocity + 20 map_id (for future support)= 39
-    agent = DoubleDQNAgent(input_shape=39, num_actions=5)
+    agent = VanillaDQNAgent(input_shape=39, num_actions=5)
     epsilon = EPSILON_START
     episode_loss = np.full(NUM_EPISODES, None, dtype=np.float32)
-    
-    if LOAD_MODEL:
-        try:
-            agent.load("models/vanilla_dqn_submarine_final.pth")
-            print("Successfully loaded existing model!")
-            epsilon = EPSILON_START # Use the config value (0.2) instead of hardresetting to 1.0
-        except Exception as e:
-            print(f"Could not load model ({e}). This is expected if you upgraded the Network Architecture (Bigger Brain). Starting fresh!")
-            epsilon = 1.0 # Reset exploration for new brain
-
 
     total_steps = 0
 
@@ -212,10 +202,10 @@ def train():
     start_episode = 0
 
     if LOAD_MODEL:
-        model_path = "models/ddqn_submarine_final.pth"
+        model_path = "models/vanilla_dqn_submarine_final.pth"
         if not os.path.exists(model_path):
             # Try to find the latest checkpoint
-            list_of_files = glob.glob('models/ddqn_submarine_ep*.pth')
+            list_of_files = glob.glob('models/vanilla_dqn_submarine_ep*.pth')
             if list_of_files:
                 model_path = max(list_of_files, key=os.path.getctime)
                 # Try to extract episode number
@@ -667,18 +657,14 @@ def train():
                 clean_stats[map_idx]['dirty_fail'] += 1
 
         epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
-        average_loss = total_loss / (step + 1)
-        episode_loss[episode] = average_loss
+        #average_loss = total_loss / (step + 1)
+        #episode_loss[episode] = average_loss
         if episode % 10 == 0:
-            print(f"Episode {episode}/{NUM_EPISODES} | Total Reward: {total_reward:.2f} | Epsilon: {epsilon:.2f} | Loss: {average_loss:.4f} ")
+            print(f"Episode {episode}/{NUM_EPISODES} | Total Reward: {total_reward:.2f} | Epsilon: {epsilon:.2f}")
 
         if episode % SAVE_INTERVAL == 0:
             agent.save(f"models/vanilla_dqn_submarine_ep{episode}.pth")
         
-        
-        # Calculate success rate
-        if episode % SAVE_INTERVAL == 0:
-            agent.save(f"models/ddqn_submarine_ep{episode}.pth")
 
     np.save("models/vanilla_dqn_training_loss.npy", episode_loss)
     agent.save("models/vanilla_dqn_submarine_final.pth")

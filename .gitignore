@@ -5,3 +5,4 @@ SPECS.md
 README.md
 RLCOURSEWORK.md
 FINAL_RESULTS.md
+/models/*.pth
