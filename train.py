@@ -15,10 +15,10 @@ from src.ai.agent import PPOAgent
 
 # Configuration
 WATCH_MODE = False
-LOAD_MODEL = True
-NUM_EPISODES = 20000
-MAX_STEPS = 4000
-UPDATE_INTERVAL = 4096  # Higher for multi-map stability
+LOAD_MODEL = False
+NUM_EPISODES = 50000
+MAX_STEPS = 3000
+UPDATE_INTERVAL = 8192  # Higher for multi-map stability
 BATCH_SIZE = 128
 SAVE_INTERVAL = 50
 
@@ -27,6 +27,7 @@ MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
     "src/cave_environment/map2_jagged.csv",
     "src/cave_environment/map3_jagged_long_narrow.csv",
+    "src/cave_environment/map4_zigzag.csv",
     "src/cave_environment/map5_one_battery.csv",
     "src/cave_environment/map6_three_battery.csv",
     "src/cave_environment/map7_obstacle_simple.csv",
@@ -198,21 +199,67 @@ def train():
             variance = random.randint(-50, 50)
             target_x_min = max(50, min(curr_x + variance, 2800))
         
+        # wall_rects = [t.rect for t in cave_env.environment_tiles]
+        # wall_rects.extend([o.rect for o in cave_env.obstacles])
+        # found_start = False
+        # for x in range(target_x_min, cave_env.environment_width - 50, 20):
+        #      valid_ys = []
+        #      for y in range(50, cave_env.environment_height - 50, 10):
+        #          if pygame.Rect(x - 30, y - 30, 60, 60).collidelist(wall_rects) == -1:
+        #              valid_ys.append(y)
+        #      if len(valid_ys) > 0:
+        #         #  start_x, start_y = x, sum(valid_ys) // len(valid_ys)
+        #         start_y = random.choice(valid_ys)
+        #         found_start = True
+        #         break
+        # if not found_start: start_x, start_y = 100, 350
+            
+        # submarine = Submarine(start_x, start_y)
+        
+        # --- ROBUST SPAWN LOGIC ---
+        
+        # 1. Define what we are colliding against
         wall_rects = [t.rect for t in cave_env.environment_tiles]
         wall_rects.extend([o.rect for o in cave_env.obstacles])
+        
+        # 2. Determine Search Range
+        # If curriculum is active, try the target X. If that fails, scan BACKWARDS to 100.
+        search_start_x = target_x_min
+        
+        start_x, start_y = 100, 300 # Default (will be overwritten)
         found_start = False
-        for x in range(target_x_min, cave_env.environment_width - 50, 20):
+        
+        # Search Loop: Try current X, then move left if blocked, until we hit the start
+        # We search a 400px window around the target, then give up and search from X=100
+        search_zones = list(range(search_start_x, search_start_x + 200, 20)) + \
+                       list(range(search_start_x, max(50, search_start_x - 200), -20)) + \
+                       list(range(100, 500, 20)) # Final backup: Search the very start area
+                       
+        for x in search_zones:
+             if x >= cave_env.environment_width - 50: continue
+             
              valid_ys = []
-             for y in range(50, cave_env.environment_height - 50, 10):
-                 if pygame.Rect(x - 30, y - 30, 60, 60).collidelist(wall_rects) == -1:
+             # Scan Y from top to bottom
+             for y in range(50, cave_env.environment_height - 50, 20):
+                 # INCREASE SAFETY MARGIN: Check 80x80 box (Submarine is approx 60x40)
+                 # This ensures we aren't just "barely" fitting in.
+                 check_rect = pygame.Rect(x - 40, y - 40, 80, 80)
+                 
+                 if check_rect.collidelist(wall_rects) == -1:
                      valid_ys.append(y)
+             
              if len(valid_ys) > 0:
-                 start_x, start_y = x, sum(valid_ys) // len(valid_ys)
+                 start_x = x
+                 start_y = random.choice(valid_ys) # Pick a RANDOM valid Y, not average
                  found_start = True
                  break
-        if not found_start: start_x, start_y = 100, 300
-            
+        
+        if not found_start:
+             print(f"WARNING: Could not find ANY spawn for Map {map_idx}. forcing 100,300")
+             start_x, start_y = 100, 350
+             
         submarine = Submarine(start_x, start_y)
+        
         if "one_battery" in MAP_FILES[map_idx] or "three_battery" in MAP_FILES[map_idx]:
              submarine.battery = 300
         else:
@@ -313,7 +360,7 @@ def train():
             
             # Stagnation
             stagnation_timer += 1
-            if stagnation_timer >= 300:
+            if stagnation_timer >= 400:
                 if abs(submarine.true_x - stagnation_start_x) < 100:
                     reward -= 5.0; done = True; map_histories[map_idx].append(0)
                 else: stagnation_timer = 0; stagnation_start_x = submarine.true_x
