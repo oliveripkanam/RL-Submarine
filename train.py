@@ -16,7 +16,7 @@ from src.ai.agent import DoubleDQNAgent
 # Configuration
 WATCH_MODE = False
 LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
-NUM_EPISODES = 2000
+NUM_EPISODES = 50000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
 EPSILON_START = 0.1
@@ -77,22 +77,10 @@ def get_full_state(sonar_data, submarine, map_idx, env_width, batteries):
     norm_vx = (submarine.vel_x + 10.0) / 20.0
     norm_vy = (submarine.vel_y + 10.0) / 20.0
     
-    # Split-brain architecture (One-hot encoding)
-    # We  tell the agent what type of map it is in using distinct neurons
-    # Slot 0: Is_Straight (maps 0, 1)
-    # Slot 1: Is_Narrow (map 2)
-    # Slot 2: Is_Battery (maps 3, 4)
-    # Slot 3: Is_Obstacle (maps 5, 6)
-    is_straight = 1.0 if map_idx in [0, 1] else 0.0
-    is_narrow = 1.0 if map_idx == 2 else 0.0
-    is_battery = 1.0 if map_idx in [3, 4] else 0.0
-    is_obstacle = 1.0 if map_idx in [5, 6] else 0.0
-    
+    # One-hot encoding
     map_encoding = [0.0] * 20
-    map_encoding[0] = is_straight
-    map_encoding[1] = is_narrow
-    map_encoding[2] = is_battery
-    map_encoding[3] = is_obstacle
+    if map_idx < 20:
+        map_encoding[map_idx] = 1.0
     
     # Inject normalized X-position into the last slot of map_encoding
     map_encoding[-1] = submarine.true_x / env_width
@@ -387,16 +375,8 @@ def train():
             # Save previous position
             prev_x = submarine.true_x
             prev_y = submarine.true_y
-            
-            # Battery homing reward before moving
-            # DISABLED FOR PPO MATCHING
-            # prev_bat_dist = float('inf')
-            # if map_idx in [3, 4] and len(cave_env.batteries) > 0:
-            #     for bat in cave_env.batteries:
-            #         d = math.hypot(bat.rect.centerx - submarine.rect.centerx, bat.rect.centery - submarine.rect.centery)
-            #         if d < prev_bat_dist: prev_bat_dist = d
-            
-            reward = 0.0 # Base penalty (Time Penalty = 0)
+        
+            reward = 0.0 # Base penalty
 
             if action == 0: # Up
                 submarine.move_up()
@@ -413,14 +393,6 @@ def train():
             
             submarine.update()
             sonar_body.position = (submarine.rect.centerx, submarine.rect.centery)
-            
-            # Battery homing reward after moving
-            # DISABLED FOR PPO MATCHING
-            # curr_bat_dist = float('inf')
-            # if map_idx in [3, 4] and len(cave_env.batteries) > 0:
-            #     for bat in cave_env.batteries:
-            #         d = math.hypot(bat.rect.centerx - submarine.rect.centerx, bat.rect.centery - submarine.rect.centery)
-            #         if d < curr_bat_dist: curr_bat_dist = d
             
             # Apply homing reward
             battery_picked_up_this_frame = False
@@ -440,49 +412,9 @@ def train():
             current_observation = sonar.get_observation()
             min_wall_dist = min(current_observation)
 
-            # Survival maps
-            if map_idx in [2, 3, 6, 7]:
-                
-                # Speed penalty (Drag = 0)
-                speed_penalty = 0.0
-                
-                # Safety cushion (Safety Cushion = 0)
-                safety_reward = 0.0
-                
-                # Loitering penalty (Loitering = 0)
-                loitering_penalty = 0.0
-
-            # Hunting maps
-            elif map_idx == 4 or map_idx == 5:
-                # No speed penalty
-                speed_penalty = 0.0
-                
-                # Always-on safety cushion (No velocity gate)
-                # We want it to be safe even if it slows down to aim
-                safety_reward = 0.0
-                
-                # Hunting bonus 
-                # Reward vertical movement to encourage looking for batteries
-                # DISABLED FOR PPO MATCHING
-                # if abs(submarine.vel_y) > 0.5:
-                #     reward += 0.5
-
-                # Urgency bonus
-                # If battery is high (> 400), encourage moving RIGHT to finish
-                # DISABLED FOR PPO MATCHING
-                # if submarine.battery > 400:
-                #     reward += dist_x * 2.0
-            
             # Final sum
-            reward += dist_reward - speed_penalty + safety_reward + loitering_penalty
-            
-            # Cowardice penalty
-            # DISABLED FOR PPO MATCHING (Handled by clipping above)
-            # if dist_x < -0.5:
-            #     reward -= 0.5
+            reward += dist_reward
 
-            # Time penalty (Time Penalty = 0)
-            # reward -= 0.01
             # Check for battery pickups
             hits = pygame.sprite.spritecollide(submarine, cave_env.batteries, True)
             for hit in hits:
@@ -497,15 +429,6 @@ def train():
                 submarine.battery -= 50
                 reward -= 5.0 # Obstacle Hit = -5.0
                 hit_obstacle_this_run = True
-            
-            # Apply homing reward
-            # DISABLED FOR PPO MATCHING
-            # if map_idx in [3, 4] and not battery_picked_up_this_frame:
-            #     if prev_bat_dist != float('inf') and curr_bat_dist != float('inf'):
-            #         diff = prev_bat_dist - curr_bat_dist
-            #         # If diff is positive = we got closer, reward it
-            #         # If diff is negative = we moved away, penalize it
-            #         reward += diff * 4.0 
             
             # We already called sonar.get_observation() earlier for the safety reward
             # Reuse it here to avoid double computation
@@ -531,7 +454,7 @@ def train():
                 # Hitting a wall at high speed is bad
                 current_speed = math.sqrt(submarine.vel_x**2 + submarine.vel_y**2)
                 
-                # Wall Collision = -50 (Uniform)
+                # Wall collision = -50
                 penalty = 50.0
                 
                 reward -= penalty
@@ -559,7 +482,7 @@ def train():
                 if len(cave_env.batteries) == 0:
                     reward += 50.0
                 
-                reward += submarine.battery * 1.0 # Battery Residual (assuming 1:1 ratio based on "battery residual")
+                reward += submarine.battery * 1.0 # Battery residual (assuming 1:1 ratio based on "battery residual")
                 done = True
                 success_history.append(1)
                 map_stats[map_idx]['goals'] += 1
