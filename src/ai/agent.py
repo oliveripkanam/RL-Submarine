@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 import random
 from collections import deque
-from .model import DQN
+from .model import DQN, DuelingDQN
 
 class ReplayBuffer:
     def __init__(self, capacity):
@@ -87,3 +87,22 @@ class DoubleDQNAgent:
     def load(self, filename):
         self.policy_net.load_state_dict(torch.load(filename))
         self.target_net.load_state_dict(self.policy_net.state_dict())
+
+
+class DuelingDQNAgent(DoubleDQNAgent):
+    """
+    Uses DuelingDQN architecture but keeps Double DQN learning logic.
+    """
+
+    def __init__(self, input_shape=19, num_actions=4, lr=1e-5, gamma=0.99, buffer_size=100000):
+        super().__init__(input_shape, num_actions, lr, gamma, buffer_size)
+
+        # Override the networks with DuelingDQN
+        self.policy_net = DuelingDQN(input_shape, num_actions).to(self.device)
+        self.target_net = DuelingDQN(input_shape, num_actions).to(self.device)
+
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+
+        # Re-init optimizer because parameters changed
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
