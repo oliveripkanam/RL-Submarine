@@ -13,8 +13,8 @@ from src.ai.agent import DoubleDQNAgent
 
 # Configuration
 WATCH_MODE = False
-LOAD_MODEL = False     # IMPORTANT: Set to "True" to continue training from previous save
-NUM_EPISODES = 10000
+LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
+NUM_EPISODES = 50000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
 EPSILON_START = 0.1
@@ -32,6 +32,7 @@ MAP_FILES = [
     "src/cave_environment/map1_basic.csv",
     "src/cave_environment/map2_jagged.csv",
     "src/cave_environment/map3_jagged_long_narrow.csv",
+    "src/cave_environment/map4_zigzag.csv",
     "src/cave_environment/map5_one_battery.csv",
     "src/cave_environment/map6_three_battery.csv",
     "src/cave_environment/map7_obstacle_simple.csv",
@@ -230,14 +231,20 @@ def train():
 
         # Weighted training
         rand_val = random.random()
-        if rand_val < 0.5:
-            map_idx = 6            
-        elif rand_val < 0.8:
-            map_idx = 2             
-        elif rand_val < 0.9:
-            map_idx = 4             
+        if rand_val < 0.30:
+            map_idx = 2
+        elif rand_val < 0.55:
+            map_idx = 4
+        elif rand_val < 0.75:
+            map_idx = 7
+        elif rand_val < 0.85:
+            map_idx = 6
+        elif rand_val < 0.90:
+            map_idx = 5
+        elif rand_val < 0.95:
+            map_idx = 3
         else:
-            map_idx = random.choice([0, 1, 3, 5])
+            map_idx = random.choice([0, 1])
             
         map_stats[map_idx]['attempts'] += 1
         
@@ -438,7 +445,7 @@ def train():
             min_wall_dist = min(current_observation)
 
             # Survival maps
-            if map_idx in [2, 5, 6]:
+            if map_idx in [2, 3, 6, 7]:
                 
                 # Speed penalty (Drag = 0)
                 speed_penalty = 0.0
@@ -450,7 +457,7 @@ def train():
                 loitering_penalty = 0.0
 
             # Hunting maps
-            elif map_idx == 4 or map_idx == 3:
+            elif map_idx == 4 or map_idx == 5:
                 # No speed penalty
                 speed_penalty = 0.0
                 
