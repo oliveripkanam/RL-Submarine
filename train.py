@@ -15,16 +15,11 @@ from src.ai.agent import DoubleDQNAgent, VanillaDQNAgent
 
 # Configuration
 WATCH_MODE = False
-<<<<<<< HEAD
-LOAD_MODEL = False     # IMPORTANT: Set to "True" to continue training from previous save
-NUM_EPISODES = 5000
-=======
-LOAD_MODEL = True     # IMPORTANT: Set to "True" to continue training from previous save
-NUM_EPISODES = 10000
->>>>>>> ddqn-training-new-values
+LOAD_MODEL = True   # IMPORTANT: Set to "True" to continue training from previous save
+NUM_EPISODES = 50000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
-EPSILON_START = 0.1
+EPSILON_START = 0.9
 EPSILON_END = 0.01
 EPSILON_DECAY = 0.999
 TARGET_UPDATE = 1000
