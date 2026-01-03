@@ -229,16 +229,18 @@ def train():
 
         # Weighted training
         rand_val = random.random()
-        if rand_val < 0.5:
+        if rand_val < 0.25:
             map_idx = 7
-        elif rand_val < 0.8:
+        elif rand_val < 0.65:
+            map_idx = 4
+        elif rand_val < 0.80:
             map_idx = 2
-        elif rand_val < 0.9:
+        elif rand_val < 0.90:
             map_idx = 5
         elif rand_val < 0.95:
             map_idx = 3
         else:
-            map_idx = random.choice([0, 1, 4, 6])
+            map_idx = random.choice([0, 1, 6])
             
         map_stats[map_idx]['attempts'] += 1
         
