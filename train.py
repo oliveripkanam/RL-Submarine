@@ -632,7 +632,7 @@ def train():
 
     for i, filename in enumerate(MAP_FILES):
         # Show battery stats for map 5 and 6
-        if i in [3, 4] and i in battery_stats and map_stats[i]['attempts'] > 0:
+        if i in [4, 5] and i in battery_stats and map_stats[i]['attempts'] > 0:
             bs = battery_stats[i]
             display_name = filename.split('/')[-1]
             print(f"{display_name:<25} | {bs['picked_up']:<11} | {bs['picked_success']:<11} | {bs['picked_fail']:<11} | {bs['ignored_fail']:<12} | {bs['ignored_success']:<12}")
@@ -646,7 +646,7 @@ def train():
 
     for i, filename in enumerate(MAP_FILES):
         # Show obstacle stats for map 7 and 8
-        if i in [5, 6] and i in obstacle_stats and map_stats[i]['attempts'] > 0:
+        if i in [6, 7] and i in obstacle_stats and map_stats[i]['attempts'] > 0:
             os_stats = obstacle_stats[i]
             display_name = filename.split('/')[-1]
             print(f"{display_name:<25} | {os_stats['avoided_won']:<11} | {os_stats['avoided_died']:<11} | {os_stats['hit_died']:<11} | {os_stats['hit_won']:<11}")
