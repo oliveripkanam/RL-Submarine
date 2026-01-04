@@ -12,7 +12,7 @@ from src.sonar.sensors import Sonar
 from src.ai.agent import DoubleDQNAgent
 
 # --- CONFIGURATION ---
-LOAD_MODEL = True  # Set False to restart fresh
+LOAD_MODEL = False  # Set False to restart fresh
 NUM_EPISODES = 50000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
