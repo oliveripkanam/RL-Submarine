@@ -13,6 +13,8 @@ from src.entities.items import Battery, Obstacle
 from src.sonar.sensors import Sonar
 from src.ai.agent import PPOAgent
 
+import time
+
 # Configuration
 WATCH_MODE = False
 LOAD_MODEL = False
@@ -116,6 +118,8 @@ def calculate_dynamic_weights(map_stats, num_maps):
 
 def train():
     global WATCH_MODE
+    
+    training_start_time = time.time()
     
     if not LOAD_MODEL:
         files = glob.glob("models/*.pth")
@@ -434,10 +438,20 @@ def train():
 
     agent.save("models/ppo_submarine_final.pth")
     
+    training_end_time = time.time()
+    total_seconds = training_end_time - training_start_time
+    hours = int(total_seconds // 3600)
+    minutes = int((total_seconds % 3600) // 60)
+    seconds = int(total_seconds % 60)
+    
     # --- FINAL DETAILED PRINTOUTS ---
     print("\n" + "="*50)
     print("TRAINING COMPLETE - FINAL STATISTICS")
     print("="*50)
+    # ### NEW: Print the time ###
+    print(f"Total Training Time: {hours}h {minutes}m {seconds}s") 
+    print(f"Total Episodes:      {NUM_EPISODES}")
+    print("-" * 50)
     print(f"{'Map File':<40} | {'Goals':<5} | {'Atts':<6} | {'SR %':<6} | {'Avg Rwd':<8}")
     print("-" * 80)
     for i, filename in enumerate(MAP_FILES):
