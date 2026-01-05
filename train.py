@@ -15,7 +15,7 @@ from src.ai.agent import DoubleDQNAgent, VanillaDQNAgent
 
 # Configuration
 WATCH_MODE = False
-LOAD_MODEL = True   # IMPORTANT: Set to "True" to continue training from previous save
+LOAD_MODEL = True # IMPORTANT: Set to "True" to continue training from previous save
 NUM_EPISODES = 50000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
