@@ -414,6 +414,11 @@ def train():
     print("\n" + "="*50)
     print("TRAINING COMPLETE - FINAL STATISTICS")
     print(f"Total Training Time: {format_time(total_time)}")
+    
+    # Record time to file
+    with open("training_time.txt", "w") as f:
+        f.write(f"Total Training Time: {format_time(total_time)}")
+        
     print("="*50)
     print(f"{'Map File':<40} | {'Goals':<5} | {'Attempts':<8} | {'Success Rate':<12} | {'Avg Reward':<10}")
     print("-" * 85)
