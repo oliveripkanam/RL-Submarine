@@ -6,37 +6,36 @@ import pymunk
 import numpy as np
 import glob
 import random
-import math
-import time  # <--- Added for runtime tracking
+import time
 from src.cave_environment.environment import CaveEnvironment
 from src.cave_environment.spritesheet import SpriteSheet
 from src.entities.submarine import Submarine
 from src.sonar.sensors import Sonar
-from src.ai.agent import DoubleDQNAgent  # Keeping your agent as requested
+from src.ai.agent import DoubleDQNAgent  # As we're using DDQN with PER
 
 # Configuration
 WATCH_MODE = False
-LOAD_MODEL = False        # Standardized: False for fresh comparison
-NUM_EPISODES = 50000      # Standardized: 50k
+LOAD_MODEL = False
+NUM_EPISODES = 50000
 MAX_STEPS = 4000
 BATCH_SIZE = 128
-EPSILON_START = 1.0       # Standardized: 1.0
+EPSILON_START = 1.0
 EPSILON_END = 0.01
-EPSILON_DECAY = 0.99995   # Standardized decay
+EPSILON_DECAY = 0.99995
 TARGET_UPDATE = 1000
 SAVE_INTERVAL = 50
 
-# PER Hyperparameters
+# PER hyperparameters
 BETA_START = 0.4
-BETA_FRAMES = 100000      # Anneal beta over 100k steps
+BETA_FRAMES = 100000
 
-# --- HELPER: Format Seconds ---
+# Format seconds to H:M:S
 def format_time(seconds):
     m, s = divmod(seconds, 60)
     h, m = divmod(m, 60)
     return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
-# --- HELPER: Smart Epsilon Decay (Matches Code 3) ---
+# Smart epsilon decay
 def get_epsilon(episode):
     if episode < 5000:
         return 1.0
@@ -131,7 +130,7 @@ def train():
     training_start_time = time.time()
     
     if not LOAD_MODEL:
-        files = glob.glob("models/per_dqn_*.pth") # Changed pattern to avoid deleting standard DDQN
+        files = glob.glob("models/per_dqn_*.pth")
         for f in files:
             try: os.remove(f)
             except: pass
@@ -145,7 +144,7 @@ def train():
         preloaded_maps.append((s, e))
     print("Maps loaded.")
     
-    # Initialize your custom agent (DoubleDQNAgent with PER support)
+    # Initialize custom agent
     agent = DoubleDQNAgent(input_shape=39, num_actions=5)
     
     total_steps = 0
@@ -178,10 +177,7 @@ def train():
             epsilon = 1.0
 
     for episode in range(start_episode, NUM_EPISODES):
-        # --- SMART EPSILON ---
         epsilon = get_epsilon(episode)
-
-        # --- STANDARDIZED CURRICULUM (Hard Mode) ---
         rand_val = random.random()
         if rand_val < 0.25: map_idx = 7
         elif rand_val < 0.65: map_idx = 4
@@ -212,7 +208,7 @@ def train():
                 for s in body.shapes: space.remove(s)
         if not space: continue
 
-        # Standard Spawn Logic
+        # Standard spawn logic
         start_x, start_y = 100, 300
         found_start = False
         wall_rects = [t.rect for t in cave_env.environment_tiles]
@@ -239,7 +235,7 @@ def train():
                      break
 
         submarine = Submarine(start_x, start_y)
-        if map_idx in [3, 4]: submarine.battery = 300
+        if map_idx in [4, 5]: submarine.battery = 300
         else: submarine.battery = 600
         
         current_run_picked_battery = False
@@ -297,7 +293,6 @@ def train():
             current_observation = sonar.get_observation()
             next_state = get_full_state(current_observation, submarine, map_idx, cave_env.environment_width, cave_env.batteries)
             
-            # Memory Push (Assuming your DoubleDQNAgent handles the PER priorities internally)
             agent.memory.push(state, action, reward, next_state, done)
             
             total_reward += reward
@@ -334,9 +329,8 @@ def train():
                 stagnation_start_x = submarine.true_x
 
             if step % 4 == 0:
-                # PER Beta Annealing
+                # PER beta annealing
                 beta = min(1.0, BETA_START + total_steps * (1.0 - BETA_START) / BETA_FRAMES)
-                # Assuming your DoubleDQNAgent's train_step accepts beta!
                 loss = agent.train_step(BATCH_SIZE, beta)
                 if loss is not None: loss_history.append(loss)
             
@@ -423,6 +417,44 @@ def train():
         success_rate = (goals / attempts * 100) if attempts > 0 else 0
         print(f"{filename.split('/')[-1]:<40} | {goals:<5} | {attempts:<8} | {success_rate:<11.1f}% | {avg_reward:<10.1f}")
     
+    # Battery stats
+    print("\n" + "="*50)
+    print("BATTERY STATS")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Picked(Up)':<11} | {'Picked(Win)':<11} | {'Picked(Die)':<11} | {'Ignored(Die)':<12} | {'Ignored(Win)':<12}")
+    print("-" * 90)
+    for i in [4, 5]:
+        bs = battery_stats[i]
+        display_name = MAP_FILES[i].split('/')[-1]
+        print(f"{display_name:<25} | {bs['picked_up']:<11} | {bs['picked_success']:<11} | {bs['picked_fail']:<11} | {bs['ignored_fail']:<12} | {bs['ignored_success']:<12}")
+
+    # Obstacle stats
+    print("\n" + "="*50)
+    print("OBSTACLE STATS")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Avoid(Win)':<11} | {'Avoid(Die)':<11} | {'Hit(Die)':<11} | {'Hit(Win)':<11}")
+    print("-" * 90)
+    for i in [6, 7]:
+        os_stats = obstacle_stats[i]
+        display_name = MAP_FILES[i].split('/')[-1]
+        print(f"{display_name:<25} | {os_stats['avoided_won']:<11} | {os_stats['avoided_died']:<11} | {os_stats['hit_died']:<11} | {os_stats['hit_won']:<11}")
+
+    # Clean run stats
+    print("\n" + "="*50)
+    print("CLEAN RUN STATS (No Wall/Obstacle Hits)")
+    print("="*50)
+    print(f"{'Map File':<25} | {'Clean Win':<11} | {'Dirty Win':<11} | {'Clean Fail':<11} | {'Dirty Fail':<11}")
+    print("-" * 90)
+    for i, filename in enumerate(MAP_FILES):
+        if map_stats[i]['attempts'] > 0:
+            cs = clean_stats[i]
+            display_name = filename.split('/')[-1]
+            print(f"{display_name:<25} | {cs['clean_win']:<11} | {cs['dirty_win']:<11} | {cs['clean_fail']:<11} | {cs['dirty_fail']:<11}")
+
+    # Record time to file
+    with open("training_time.txt", "w") as f:
+        f.write(f"Total Training Time: {format_time(total_time)}")
+
     avg_first_100 = sum(loss_history[:100]) / len(loss_history[:100]) if len(loss_history) >= 100 else 0
     avg_last_100 = sum(loss_history[-100:]) / len(loss_history[-100:]) if len(loss_history) >= 100 else 0
     print("\n" + "="*50)

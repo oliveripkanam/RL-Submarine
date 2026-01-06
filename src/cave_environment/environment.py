@@ -25,8 +25,8 @@ class CaveEnvironment:
         
         self.environment_tiles = self.load_tiles(plot_filename)
         
-        # Calculate dimensions based on the data we just loaded
-        # We find the tile with the max x and max y coordinates
+        # Calculate dimensions based on the data just loaded
+        # Find the tile with the max x and max y coordinates
         if self.environment_tiles:
             max_x = max(tile.rect.right for tile in self.environment_tiles)
             max_y = max(tile.rect.bottom for tile in self.environment_tiles)
@@ -61,10 +61,6 @@ class CaveEnvironment:
                     self.batteries.add(Battery(x * self.tile_size, y * self.tile_size))
                 elif tile == '21': # Obstacle
                     self.obstacles.add(Obstacle(x * self.tile_size, y * self.tile_size))
-                
-                # Ignore wind tiles
-                elif tile == '30' or tile == '31':
-                    pass
                 
                 # Create wall tile
                 elif tile != '-1':
